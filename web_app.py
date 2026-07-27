@@ -40,32 +40,64 @@ def safe_name(name: str) -> str:
     return Path(name).name.replace("/", "_").replace("\\", "_")
 
 
-def output_path(name: str | None, prefix: str = "tracker") -> str:
+def user_upload_dir(user: dict) -> Path:
+    d = UPLOAD_DIR / str(user["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def user_output_dir(user: dict) -> Path:
+    d = OUTPUT_DIR / str(user["id"])
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def output_path(name: str | None, prefix: str, user: dict) -> str:
+    folder = user_output_dir(user)
     if name:
-        return str(OUTPUT_DIR / safe_name(name))
+        return str(folder / safe_name(name))
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return str(OUTPUT_DIR / f"{prefix}_{stamp}.xlsx")
+    return str(folder / f"{prefix}_{stamp}.xlsx")
 
 
-def resolve_workbook(value: str) -> str:
+def resolve_workbook(value: str, user: dict) -> str:
     if not value:
         raise HTTPException(status_code=400, detail="Workbook/source path is required")
     p = Path(value)
     if p.exists():
         return str(p)
-    upload_candidate = UPLOAD_DIR / safe_name(value)
-    if upload_candidate.exists():
-        return str(upload_candidate)
-    output_candidate = OUTPUT_DIR / safe_name(value)
-    if output_candidate.exists():
-        return str(output_candidate)
+    name = safe_name(value)
+    candidates = [user_upload_dir(user) / name, user_output_dir(user) / name]
+    if v65_is_admin_or_super(user):
+        candidates += sorted(UPLOAD_DIR.glob(f"*/{name}")) + sorted(OUTPUT_DIR.glob(f"*/{name}"))
+    for c in candidates:
+        if Path(c).exists():
+            return str(c)
     return value
+
+
+def _owned_files(folder: Path):
+    return [{"name": p.name} for p in sorted(folder.glob("*.xlsx"))]
+
+
+def _all_owned_files(base_dir: Path):
+    out = []
+    for sub in sorted(base_dir.iterdir()):
+        if not sub.is_dir():
+            continue
+        owner = user_service.get_user_by_id(int(sub.name)) if sub.name.isdigit() else None
+        owner_label = owner.get("email") if owner else "Unassigned (legacy)"
+        for p in sorted(sub.glob("*.xlsx")):
+            out.append({"name": p.name, "owner_id": sub.name, "owner": owner_label})
+    return out
 
 
 
 
 @app.get("/chat", response_class=HTMLResponse)
-def chat_page():
+def chat_page(request: Request):
+    if not current_user_from_request(request):
+        return RedirectResponse('/login')
     return (BASE_DIR / "web" / "chat.html").read_text(encoding="utf-8")
 
 
@@ -265,27 +297,57 @@ def user_dashboard(request: Request):
 
 @app.post("/api/upload")
 def upload_workbook(request: Request, file: UploadFile = File(...)):
+    user = require_login(request)
     filename = safe_name(file.filename or "workbook.xlsx")
-    dst = UPLOAD_DIR / filename
+    dst = user_upload_dir(user) / filename
     with dst.open("wb") as f:
         shutil.copyfileobj(file.file, f)
-    user = current_user_from_request(request)
     audit_service.log(user, interface='Forms', action='Upload Workbook', target_type='Workbook', target_name=filename, output_workbook=filename, status='Success')
     return {"ok": True, "filename": filename, "path": str(dst)}
 
 
 @app.get("/api/files")
-def list_files():
-    def items(folder: Path):
-        return [{"name": p.name, "path": str(p)} for p in sorted(folder.glob("*.xlsx"))]
-    return {"uploads": items(UPLOAD_DIR), "outputs": items(OUTPUT_DIR)}
+def list_files(request: Request):
+    user = require_login(request)
+    result = {"ok": True, "uploads": _owned_files(user_upload_dir(user)), "outputs": _owned_files(user_output_dir(user))}
+    if v65_is_admin_or_super(user):
+        result["all_uploads"] = _all_owned_files(UPLOAD_DIR)
+        result["all_outputs"] = _all_owned_files(OUTPUT_DIR)
+    return result
+
+
+@app.post("/api/files/delete")
+def delete_file(request: Request, payload: dict):
+    user = require_login(request)
+    folder = payload.get('folder')
+    name = safe_name(payload.get('name', ''))
+    owner_id = payload.get('owner_id')
+    if folder not in {'uploads', 'outputs'} or not name:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': 'folder (uploads/outputs) and name are required'})
+    base_dir = UPLOAD_DIR if folder == 'uploads' else OUTPUT_DIR
+    if owner_id is not None and str(owner_id) != str(user['id']):
+        if not v65_is_admin_or_super(user):
+            return JSONResponse(status_code=403, content={'ok': False, 'error': 'You can only delete your own files'})
+        target_dir = base_dir / safe_name(str(owner_id))
+    else:
+        target_dir = user_upload_dir(user) if folder == 'uploads' else user_output_dir(user)
+    target = target_dir / name
+    if target.resolve().parent != target_dir.resolve() or not target.exists() or not target.is_file():
+        return JSONResponse(status_code=404, content={'ok': False, 'error': 'File not found'})
+    target.unlink()
+    audit_service.log(user, interface='Forms', action='Delete Workbook', target_type='Workbook', target_name=name, status='Success')
+    return {'ok': True}
 
 
 @app.get("/download/{filename}")
-def download(filename: str):
+def download(request: Request, filename: str):
+    user = require_login(request)
     name = safe_name(filename)
-    for folder in [OUTPUT_DIR, UPLOAD_DIR, BASE_DIR]:
-        p = folder / name
+    search_dirs = [user_output_dir(user), user_upload_dir(user)]
+    if v65_is_admin_or_super(user):
+        search_dirs += sorted(UPLOAD_DIR.glob("*")) + sorted(OUTPUT_DIR.glob("*"))
+    for folder in search_dirs:
+        p = Path(folder) / name
         if p.exists() and p.is_file():
             return FileResponse(str(p), filename=p.name)
     raise HTTPException(status_code=404, detail="File not found")
@@ -302,13 +364,13 @@ def execute_command(request: Request, payload: dict):
         args = payload.get("args") or {}
         # Normalize file fields for the web UI.
         if "source" in args:
-            args["source"] = resolve_workbook(args["source"])
+            args["source"] = resolve_workbook(args["source"], user)
         if "workbook" in args:
-            args["workbook"] = resolve_workbook(args["workbook"])
+            args["workbook"] = resolve_workbook(args["workbook"], user)
         if "output" in args:
-            args["output"] = output_path(args.get("output"), cmd or "tracker")
+            args["output"] = output_path(args.get("output"), cmd or "tracker", user)
         elif cmd not in {"summary"}:
-            args["output"] = output_path(None, cmd or "tracker")
+            args["output"] = output_path(None, cmd or "tracker", user)
         result = executor.execute({"command": cmd, "args": args})
         response = {"ok": result.ok, "message": result.message, "output_path": result.output_path, "data": result.data}
         if result.output_path:
@@ -324,11 +386,14 @@ def execute_command(request: Request, payload: dict):
 
 
 @app.post("/api/chat/message")
-def chat_message(payload: dict):
+def chat_message(request: Request, payload: dict):
+    user = require_login(request)
     text = payload.get('message', '')
     current_workbook = payload.get('current_workbook')
     if not text:
         return JSONResponse(status_code=400, content={'ok': False, 'error': 'message is required'})
+    if current_workbook:
+        current_workbook = resolve_workbook(current_workbook, user)
     return chat_service.message(text, current_workbook)
 
 @app.post("/api/chat/update")
@@ -358,13 +423,13 @@ def chat_approve(request: Request, payload: dict):
     try:
         args = draft.args
         if 'source' in args:
-            args['source'] = resolve_workbook(args['source'])
+            args['source'] = resolve_workbook(args['source'], user)
         if 'workbook' in args:
-            args['workbook'] = resolve_workbook(args['workbook'])
+            args['workbook'] = resolve_workbook(args['workbook'], user)
         if 'output' in args:
-            args['output'] = output_path(args.get('output'), draft.command or 'chat')
+            args['output'] = output_path(args.get('output'), draft.command or 'chat', user)
         elif draft.command not in {'summary'}:
-            args['output'] = output_path(None, draft.command or 'chat')
+            args['output'] = output_path(None, draft.command or 'chat', user)
         audit_service.log(user, interface='Chat', action=getattr(draft, 'command', 'chat_approve'), approval_status='Approved', status='Started', summary='Chat proposal approved')
         result = chat_service.approve(draft_id)
         audit_service.log(user, interface='Chat', action=getattr(draft, 'command', 'chat_approve'), target_name=(getattr(draft, 'args', {}) or {}).get('intern') or (getattr(draft, 'args', {}) or {}).get('name') or (getattr(draft, 'args', {}) or {}).get('plan_name') or '', input_workbook=(getattr(draft, 'args', {}) or {}).get('source') or (getattr(draft, 'args', {}) or {}).get('workbook') or '', output_workbook=Path(result.get('output_path','')).name if result.get('output_path') else '', approval_status='Approved', status='Success' if result.get('ok') else 'Failed', summary=result.get('message',''), error_message=result.get('error',''))
@@ -774,21 +839,24 @@ def api_v92_readonly_intern_summary(request: Request, payload: dict):
 
         def resolve_workbook(value):
             raw = norm(value)
+            own_output = user_output_dir(user)
+            own_upload = user_upload_dir(user)
             candidates = []
             if raw:
                 cleaned = raw.replace('outputs /', 'outputs/').replace('uploads /', 'uploads/')
-                candidates.append(BASE_DIR / cleaned)
-                candidates.append(BASE_DIR / 'outputs' / Path(cleaned).name)
-                candidates.append(BASE_DIR / 'uploads' / Path(cleaned).name)
                 candidates.append(Path(cleaned))
+                candidates.append(own_output / Path(cleaned).name)
+                candidates.append(own_upload / Path(cleaned).name)
+                if v65_is_admin_or_super(user):
+                    candidates += sorted(OUTPUT_DIR.glob(f"*/{Path(cleaned).name}")) + sorted(UPLOAD_DIR.glob(f"*/{Path(cleaned).name}"))
             for c in candidates:
-                if c.exists() and c.is_file():
-                    return c
-            # Fallback to latest output workbook.
-            outs = sorted((BASE_DIR / 'outputs').glob('*.xlsx'), key=lambda p: p.stat().st_mtime, reverse=True) if (BASE_DIR / 'outputs').exists() else []
+                if Path(c).exists() and Path(c).is_file():
+                    return Path(c)
+            # Fallback to the user's own most recently modified workbook.
+            outs = sorted(own_output.glob('*.xlsx'), key=lambda p: p.stat().st_mtime, reverse=True)
             if outs:
                 return outs[0]
-            ups = sorted((BASE_DIR / 'uploads').glob('*.xlsx'), key=lambda p: p.stat().st_mtime, reverse=True) if (BASE_DIR / 'uploads').exists() else []
+            ups = sorted(own_upload.glob('*.xlsx'), key=lambda p: p.stat().st_mtime, reverse=True)
             if ups:
                 return ups[0]
             return None

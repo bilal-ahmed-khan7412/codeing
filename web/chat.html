@@ -293,6 +293,15 @@ details.week-card summary {
       <button class="primary mini" onclick="uploadWorkbook()">Upload & Select</button></div>
     <div id="uploadStatus" class="hint"></div>
 
+    <h2 style="margin-top:22px;">My Files</h2>
+    <p class="hint">Only your own uploads/outputs. Delete files you no longer need.</p>
+    <div id="myFilesList" class="hint">Loading...</div>
+
+    <div id="adminFilesSection" style="display:none;">
+      <h2 style="margin-top:22px;">All Users' Files (Admin)</h2>
+      <div id="adminFilesList" class="hint">Loading...</div>
+    </div>
+
     <h2 style="margin-top:22px;">Try</h2>
     <div class="examples">
       <button class="example" onclick="useExample('create an 8 week OpenShift plan for beginner interns with weekly projects')">Create OpenShift plan</button>
@@ -322,7 +331,34 @@ async function refreshFiles(){
     const all=[...(data.outputs||[]).map(x=>({name:x.name, group:'outputs'})), ...(data.uploads||[]).map(x=>({name:x.name, group:'uploads'}))];
     sel.innerHTML='<option value="">Select workbook...</option>' + all.map(x=>`<option value="${escapeHtml(x.name)}">${escapeHtml(x.group + ' / ' + x.name)}</option>`).join('');
     const cw=currentWorkbook(); if(cw) sel.value=cw;
+    renderMyFiles(data);
+    renderAdminFiles(data);
   }catch(e){ sel.innerHTML='<option value="">Could not load files</option>'; }
+}
+function renderMyFiles(data){
+  const box=document.getElementById('myFilesList');
+  if(!box) return;
+  const rows=[...(data.uploads||[]).map(x=>({...x, folder:'uploads'})), ...(data.outputs||[]).map(x=>({...x, folder:'outputs'}))];
+  if(!rows.length){ box.textContent='No files yet.'; return; }
+  box.innerHTML = rows.map(x => `<div class="file-row"><span>${escapeHtml(x.folder + ' / ' + x.name)}</span><button class="mini" onclick="deleteFile('${x.folder}', ${JSON.stringify(x.name)})">Delete</button></div>`).join('');
+}
+function renderAdminFiles(data){
+  const section=document.getElementById('adminFilesSection');
+  const box=document.getElementById('adminFilesList');
+  if(!section || !box) return;
+  if(!data.all_uploads && !data.all_outputs){ section.style.display='none'; return; }
+  section.style.display='block';
+  const rows=[...(data.all_uploads||[]).map(x=>({...x, folder:'uploads'})), ...(data.all_outputs||[]).map(x=>({...x, folder:'outputs'}))];
+  if(!rows.length){ box.textContent='No files from any user.'; return; }
+  box.innerHTML = rows.map(x => `<div class="file-row"><span>${escapeHtml(x.owner + ' — ' + x.folder + ' / ' + x.name)}</span><button class="mini" onclick="deleteFile('${x.folder}', ${JSON.stringify(x.name)}, '${x.owner_id}')">Delete</button></div>`).join('');
+}
+async function deleteFile(folder, name, ownerId){
+  if(!confirm(`Delete ${name}? This cannot be undone.`)) return;
+  const body = ownerId ? {folder, name, owner_id: ownerId} : {folder, name};
+  const res = await fetch('/api/files/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if(!data.ok){ alert(data.error || 'Delete failed.'); return; }
+  await refreshFiles();
 }
 function selectWorkbookFromDropdown(){ const val=document.getElementById('fileSelect').value; if(val) setCurrentWorkbook(val); }
 async function uploadWorkbook(){
