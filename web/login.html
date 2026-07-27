@@ -1,0 +1,11 @@
+<!doctype html><html><head><title>Login</title>
+<style>
+body{font-family:Arial,sans-serif;background:#f4f6fb;margin:0;color:#1f2937}header{background:#305496;color:white;padding:18px 28px;display:flex;justify-content:space-between}header a{color:white;font-weight:700;margin-left:14px}main{max-width:1100px;margin:0 auto;padding:20px}.card{background:white;border:1px solid #d9e2ef;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,23,42,.06);margin-bottom:16px}input,select,textarea{padding:10px;border:1px solid #d9e2ef;border-radius:9px;font:inherit;width:100%;box-sizing:border-box}label{display:flex;flex-direction:column;gap:6px;font-weight:700;margin:8px 0}button{background:#305496;color:white;border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}table{width:100%;border-collapse:collapse;background:white}th,td{border-bottom:1px solid #e5e7eb;text-align:left;padding:9px;font-size:14px;vertical-align:top}th{background:#eef2ff}.grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}.danger{background:#991b1b}.muted{color:#64748b;font-size:13px}.nav a{color:white}</style>
+</head><body>
+<header><h2>Intern Tracker Login</h2></header><main><div class="card" style="max-width:430px;margin:40px auto;">
+<h2>Sign in</h2>
+<label>Email<input id="email" autocomplete="username" placeholder="Enter your email"></label><label>Password<input id="password" type="password" autocomplete="current-password" placeholder="Enter your password"></label>
+<button onclick="login()">Login</button><p class="muted"><a href="/forgot-password">Forgot password?</a></p><p class="muted"><a href="/signup">Request access</a></p><p id="msg" class="muted"></p></div></main>
+<script>
+async function login(){const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:password.value})});const d=await r.json();if(d.ok) location.href='/'; else msg.textContent=d.error||'Login failed';}
+</script></body></html>

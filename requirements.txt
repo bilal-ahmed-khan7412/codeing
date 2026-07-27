@@ -1,0 +1,5 @@
+openpyxl
+requests
+fastapi
+uvicorn
+python-multipart

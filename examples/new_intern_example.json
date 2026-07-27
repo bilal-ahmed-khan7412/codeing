@@ -1,0 +1,32 @@
+{
+  "name": "Ahmed Ali",
+  "plan_name": "Plan 3 · Foundation+",
+  "start_date": "2026-08-01",
+  "end_date": "2026-09-30",
+  "final_project": "AIOps",
+  "main_project": {
+    "title": "AIOps Log Detection Project",
+    "objective": "Build a practical log analysis project that detects anomalies and summarizes findings.",
+    "tech_stack": "Python, pandas, Elastic/Kibana",
+    "status": "Pending"
+  },
+  "scenario": {
+    "scenario": "Investigate noisy application logs and identify unusual events.",
+    "skills": "Linux, logs, Python, observability",
+    "deliverable": "Short findings report and working demo",
+    "assigned_week": 4,
+    "due_date": "2026-08-28",
+    "status": "Pending"
+  },
+  "tasks": [
+    {"date":"2026-08-03", "week":1, "theme":"Linux Basics", "task":"Filesystem navigation, users, permissions", "status":"Pending", "remarks":""},
+    {"date":"2026-08-04", "week":1, "theme":"Linux Basics", "task":"Processes, systemd, journalctl", "status":"Pending", "remarks":""},
+    {"date":"2026-08-05", "week":1, "theme":"Linux Basics", "task":"Mini lab: explore a sample log file", "status":"Pending", "remarks":""},
+    {"date":"2026-08-10", "week":2, "theme":"Docker", "task":"Docker basics and container logs", "status":"Pending", "remarks":""},
+    {"date":"2026-08-11", "week":2, "theme":"Docker", "task":"Docker Compose for small app", "status":"Pending", "remarks":""}
+  ],
+  "projects": [
+    {"number":1, "title":"Linux log summary", "description":"Summarize errors from a sample log", "assigned_date":"2026-08-05", "due_date":"2026-08-07", "status":"Pending"},
+    {"number":2, "title":"Container logs lab", "description":"Run a container and collect logs", "assigned_date":"2026-08-11", "due_date":"2026-08-14", "status":"Pending"}
+  ]
+}

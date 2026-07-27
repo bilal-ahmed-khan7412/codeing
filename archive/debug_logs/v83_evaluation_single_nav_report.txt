@@ -1,0 +1,5 @@
+v0.83 applied.
+Removed v81/v82 injected duplicate nav/layout blocks.
+Kept evaluation-native workflow UI.
+Role-aware links are rebuilt only inside existing evaluation header.
+Updated: D:\OneDrive - Systems Limited\Documents\thurs\v13\intern_tracker_system_v0\web\evaluation.html

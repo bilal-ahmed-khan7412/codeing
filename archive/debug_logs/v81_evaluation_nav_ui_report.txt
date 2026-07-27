@@ -1,0 +1,4 @@
+v0.81 Evaluation navbar + UI patch applied.
+Evaluation page: D:\OneDrive - Systems Limited\Documents\thurs\v13\intern_tracker_system_v0\web\evaluation.html
+Backend protection: Patched /evaluation route protection in web_app.py.
+Admin/Super Admin should see Evaluation in navbar. Normal User should not.

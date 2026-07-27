@@ -1,0 +1,82 @@
+
+from __future__ import annotations
+from pathlib import Path
+import sqlite3
+from datetime import datetime
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+DB_PATH = BASE_DIR / 'data' / 'app.db'
+
+
+def get_conn():
+    DB_PATH.parent.mkdir(exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        department TEXT DEFAULT '',
+        role TEXT DEFAULT 'Manager',
+        status TEXT DEFAULT 'Active',
+        created_at TEXT NOT NULL,
+        last_login TEXT,
+        last_logout TEXT
+    )
+    ''')
+    cur.execute('''
+    CREATE TABLE IF NOT EXISTS activity_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        user_name TEXT,
+        email TEXT,
+        department TEXT,
+        role TEXT,
+        interface TEXT,
+        action TEXT,
+        target_type TEXT,
+        target_name TEXT,
+        input_workbook TEXT,
+        output_workbook TEXT,
+        status TEXT,
+        approval_status TEXT,
+        summary TEXT,
+        error_message TEXT
+    )
+    ''')
+    cur.execute('''
+    CREATE TABLE IF NOT EXISTS task_tracker (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        category TEXT DEFAULT 'General',
+        priority TEXT DEFAULT 'Medium',
+        status TEXT DEFAULT 'Pending',
+        assigned_to TEXT DEFAULT '',
+        created_by TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        due_date TEXT DEFAULT '',
+        completed_at TEXT DEFAULT '',
+        remarks TEXT DEFAULT ''
+    )
+    ''')
+    cur.execute('SELECT COUNT(*) AS c FROM users')
+    if cur.fetchone()['c'] == 0:
+        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        cur.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
+                       VALUES(?,?,?,?,?,?,?)''',
+                    ('Admin User','admin@example.com','admin123','Admin','Admin','Active',now))
+    conn.commit()
+    conn.close()
+
+
+def rows_to_dicts(rows):
+    return [dict(r) for r in rows]
