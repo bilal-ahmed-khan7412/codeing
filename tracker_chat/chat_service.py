@@ -523,6 +523,7 @@ class ChatService:
         if 'edit plan week' in lower or ('week' in lower and 'plan' in lower and 'edit' in lower): return 'edit_plan_week'
         if 'edit plan' in lower or 'rename plan' in lower: return 'edit_plan'
         if 'fresh workbook' in lower or 'blank workbook' in lower or 'create workbook' in lower: return 'create_workbook'
+        if any(v in lower for v in ['create', 'make', 'new', 'generate', 'build']) and any(w in lower for w in ['excel', 'workbook', 'xlsx']): return 'create_workbook'
         return 'summary'
 
     def _extract_common(self, text: str, lower: str, command: str, args: dict):

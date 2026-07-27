@@ -449,6 +449,13 @@ async function sendChat(){
 }
 function handleChatResponse(data){
   if(!data.ok){ chatAppend('assistant', data.error || 'Something went wrong.', 'system'); return; }
+  if(data.type === 'result' || data.readonly){
+    activeDraftId=null; activeDraftNeedsInfo=false; activeProposal=null;
+    document.getElementById('approvalState').textContent='No active proposal';
+    chatAppend('assistant', data.message || 'Done.');
+    if(data.download){ document.getElementById('proposalBox').innerHTML = `<div class="proposal"><h3 class="status-ok">Done</h3><p>${escapeHtml(data.message||'')}</p><div class="download"><a href="${data.download}">Download output workbook</a></div></div>`; }
+    return;
+  }
   activeDraftId=data.draft_id;
   activeDraftNeedsInfo = data.type === 'needs_more_info';
   if(data.type === 'needs_more_info'){
