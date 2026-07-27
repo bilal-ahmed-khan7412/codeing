@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+import html
 import json
 import re
 import uuid
@@ -89,6 +90,16 @@ class ChatService:
                 self.provider = None
 
     def message(self, text: str, current_workbook: str | None = None) -> dict:
+        # Plan-aware extension ("extend X to DATE with PLAN") and the required-four
+        # workflows (edit plan / extend intern / capstone / scenario) are checked
+        # with deterministic regex before the general intent parser, since they have
+        # very specific phrasing that the LLM/generic rules can misroute.
+        draft = self._extend_with_plan_draft(text, current_workbook)
+        if not draft:
+            draft = self._required_four_draft(text, current_workbook)
+        if draft:
+            return self._response_for_draft(draft)
+
         # Typed approvals are handled by the frontend. If they reach backend, do not
         # route them into a new command such as summary.
         if text.strip().lower() in {'approve', 'approved', 'yes', 'confirm', 'ok'}:
@@ -842,376 +853,299 @@ class ChatService:
         return re.sub(r'[^A-Za-z0-9_-]+', '_', value).strip('_')[:40] or 'Plan'
 
 
-# v38 override: LLM intern sheet draft from plan context
-# This intentionally overrides older enrichment logic. Add Intern With Plan now uses
-# the selected plan as context to produce a complete editable intern-sheet draft.
-def _v38_enrich_add_intern_with_plan(self, draft):
-    args = draft.args
-    required = ['source', 'name', 'start_date', 'end_date', 'plan_name']
-    if any(not args.get(k) for k in required):
-        return
-    try:
-        sheet = self.intern_sheet_drafter.draft(args.get('source'), args.get('name'), args.get('start_date'), args.get('end_date'), args.get('plan_name'))
-    except Exception:
-        return
-    main = sheet.get('main_project') or {}
-    scenario = sheet.get('scenario') or {}
-    weeks = sheet.get('weeks') or []
-    args['main_title'] = args.get('main_title') or main.get('title', '')
-    args['objective'] = args.get('objective') or main.get('objective', '')
-    args['tech_stack'] = args.get('tech_stack') or main.get('tech_stack', '')
-    args['final_project'] = args.get('final_project') or args.get('main_title', '')
-    args['scenario'] = args.get('scenario') or scenario.get('scenario', '')
-    args['skills'] = args.get('skills') or scenario.get('skills', '')
-    args['deliverable'] = args.get('deliverable') or scenario.get('deliverable', '')
-    if weeks:
-        args['schedule_preview'] = weeks
 
-ChatService._enrich_add_intern_with_plan = _v38_enrich_add_intern_with_plan
+    def _enrich_add_intern_with_plan(self, draft):
+        """Draft a complete intern-sheet preview using the selected plan as context.
 
+        This does not create the workbook. It only enriches the in-memory draft so
+        the user can review/edit before approval.
+        """
+        args = draft.args
+        required = ['source', 'name', 'start_date', 'end_date', 'plan_name']
+        if any(not args.get(k) for k in required):
+            return
+        try:
+            sheet = self.intern_sheet_drafter.draft(args.get('source'), args.get('name'), args.get('start_date'), args.get('end_date'), args.get('plan_name'))
+        except Exception:
+            return
+        main = sheet.get('main_project') or {}
+        scenario = sheet.get('scenario') or {}
+        weeks = sheet.get('weeks') or []
+        args['main_title'] = args.get('main_title') or main.get('title', '')
+        args['objective'] = args.get('objective') or main.get('objective', '')
+        args['tech_stack'] = args.get('tech_stack') or main.get('tech_stack', '')
+        args['final_project'] = args.get('final_project') or args.get('main_title', '')
+        args['scenario'] = args.get('scenario') or scenario.get('scenario', '')
+        args['skills'] = args.get('skills') or scenario.get('skills', '')
+        args['deliverable'] = args.get('deliverable') or scenario.get('deliverable', '')
+        if weeks:
+            args['schedule_preview'] = weeks
 
-# v0.48 repaired required-four chat workflow override
-# One clean safe override. Do not re-apply v45/v46/v47 after this.
-if not hasattr(ChatService, '_base_message_v48'):
-    ChatService._base_message_v48 = ChatService.message
+    def _clean_name(self, value: str) -> str:
+        value = (value or '').strip().strip(' .,:;')
+        value = re.sub(r'^(of|for|intern|the intern)\s+', '', value, flags=re.I).strip()
+        if not value:
+            return value
+        parts = []
+        for p in value.split():
+            low = p.lower()
+            if low == 'ai':
+                parts.append('AI')
+            elif low == 'ml':
+                parts.append('ML')
+            elif low == 'llm':
+                parts.append('LLM')
+            elif low == 'devops':
+                parts.append('DevOps')
+            elif low == 'secops':
+                parts.append('SecOps')
+            else:
+                parts.append(p[:1].upper() + p[1:])
+        return ' '.join(parts)
 
+    def _first_date(self, text: str):
+        m = re.search(r'20\d{2}-\d{2}-\d{2}', text or '')
+        return m.group(0) if m else None
 
-def _v48_clean_name(value: str) -> str:
-    value = (value or '').strip().strip(' .,:;')
-    value = re.sub(r'^(of|for|intern|the intern)\s+', '', value, flags=re.I).strip()
-    if not value:
-        return value
-    parts = []
-    for p in value.split():
-        low = p.lower()
-        if low == 'ai':
-            parts.append('AI')
-        elif low == 'ml':
-            parts.append('ML')
-        elif low == 'llm':
-            parts.append('LLM')
-        elif low == 'devops':
-            parts.append('DevOps')
-        elif low == 'secops':
-            parts.append('SecOps')
-        else:
-            parts.append(p[:1].upper() + p[1:])
-    return ' '.join(parts)
+    def _stamped_output(self, command: str) -> str:
+        return f'{command}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
 
-
-def _v48_first_date(text: str):
-    m = re.search(r'20\d{2}-\d{2}-\d{2}', text or '')
-    return m.group(0) if m else None
-
-
-def _v48_output(command: str):
-    return f'{command}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-
-
-def _v48_edit_plan_draft(self, text: str, current_workbook: str | None):
-    lower = text.lower()
-    if not any(x in lower for x in ['rename plan', 'edit plan', 'update plan', 'change plan']):
-        return None
-    if 'week' in lower:
-        return None
-    args = {}
-    if current_workbook:
-        args['source'] = current_workbook
-    m = re.search(r'(?:rename|change)\s+plan\s+(.+?)\s+to\s+(.+)$', text, re.I)
-    if m:
-        args['plan_name'] = _v48_clean_name(m.group(1))
-        args['new_name'] = _v48_clean_name(m.group(2))
-    else:
-        m = re.search(r'(?:edit|update|change)\s+plan\s+(.+?)\s+description\s+(?:to|as)\s+(.+)$', text, re.I)
+    def _edit_plan_draft(self, text: str, current_workbook: str | None):
+        lower = text.lower()
+        if not any(x in lower for x in ['rename plan', 'edit plan', 'update plan', 'change plan']):
+            return None
+        if 'week' in lower:
+            return None
+        args = {}
+        if current_workbook:
+            args['source'] = current_workbook
+        m = re.search(r'(?:rename|change)\s+plan\s+(.+?)\s+to\s+(.+)$', text, re.I)
         if m:
-            args['plan_name'] = _v48_clean_name(m.group(1))
-            args['description'] = m.group(2).strip()
+            args['plan_name'] = self._clean_name(m.group(1))
+            args['new_name'] = self._clean_name(m.group(2))
         else:
-            m = re.search(r'(?:edit|update)\s+plan\s+(.+)$', text, re.I)
+            m = re.search(r'(?:edit|update|change)\s+plan\s+(.+?)\s+description\s+(?:to|as)\s+(.+)$', text, re.I)
             if m:
-                args['plan_name'] = _v48_clean_name(m.group(1))
-    args.setdefault('output', _v48_output('edit_plan'))
-    return ChatDraft(str(uuid.uuid4()), 'edit_plan', args)
+                args['plan_name'] = self._clean_name(m.group(1))
+                args['description'] = m.group(2).strip()
+            else:
+                m = re.search(r'(?:edit|update)\s+plan\s+(.+)$', text, re.I)
+                if m:
+                    args['plan_name'] = self._clean_name(m.group(1))
+        args.setdefault('output', self._stamped_output('edit_plan'))
+        return ChatDraft(str(uuid.uuid4()), 'edit_plan', args)
 
-
-def _v48_extend_intern_draft(self, text: str, current_workbook: str | None):
-    lower = text.lower()
-    if not ('extend' in lower or 'end date' in lower or 'new end' in lower):
-        return None
-    args = {}
-    if current_workbook:
-        args['source'] = current_workbook
-    date = _v48_first_date(text)
-    if date:
-        args['new_end'] = date
-    m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
-    if not m:
-        m = re.search(r'(?:change|update|set)\s+(?:intern\s+)?(.+?)\s+(?:end date|new end)\s+(?:to|as)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
-    if m:
-        args['intern'] = _v48_clean_name(m.group(1))
-    args.setdefault('output', _v48_output('extend_intern'))
-    return ChatDraft(str(uuid.uuid4()), 'extend_intern', args)
-
-
-def _v48_capstone_draft(self, text: str, current_workbook: str | None):
-    lower = text.lower()
-    if not any(x in lower for x in ['main project', 'capstone']):
-        return None
-    args = {}
-    if current_workbook:
-        args['source'] = current_workbook
-
-    # update main project of Saleem to Agentic AI platform
-    m = re.search(r'(?:update|edit|change|set)\s+(?:main project|capstone)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
-    if m:
-        args['intern'] = _v48_clean_name(m.group(1))
-        args['title'] = m.group(2).strip()
-    else:
-        # update Saleem main project to Agentic AI platform
-        m = re.search(r'(?:update|edit|change|set)\s+(?:intern\s+)?(.+?)\s+(?:main project|capstone)\s+(?:to|as)\s+(.+)$', text, re.I)
+    def _extend_intern_draft(self, text: str, current_workbook: str | None):
+        lower = text.lower()
+        if not ('extend' in lower or 'end date' in lower or 'new end' in lower):
+            return None
+        args = {}
+        if current_workbook:
+            args['source'] = current_workbook
+        date = self._first_date(text)
+        if date:
+            args['new_end'] = date
+        m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
+        if not m:
+            m = re.search(r'(?:change|update|set)\s+(?:intern\s+)?(.+?)\s+(?:end date|new end)\s+(?:to|as)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
         if m:
-            args['intern'] = _v48_clean_name(m.group(1))
+            args['intern'] = self._clean_name(m.group(1))
+        args.setdefault('output', self._stamped_output('extend_intern'))
+        return ChatDraft(str(uuid.uuid4()), 'extend_intern', args)
+
+    def _capstone_draft(self, text: str, current_workbook: str | None):
+        lower = text.lower()
+        if not any(x in lower for x in ['main project', 'capstone']):
+            return None
+        args = {}
+        if current_workbook:
+            args['source'] = current_workbook
+
+        # update main project of Saleem to Agentic AI platform
+        m = re.search(r'(?:update|edit|change|set)\s+(?:main project|capstone)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
+        if m:
+            args['intern'] = self._clean_name(m.group(1))
             args['title'] = m.group(2).strip()
         else:
-            m = re.search(r'(?:update|edit|change)\s+(?:intern\s+)?(.+?)\s+(?:main project|capstone)', text, re.I)
+            # update Saleem main project to Agentic AI platform
+            m = re.search(r'(?:update|edit|change|set)\s+(?:intern\s+)?(.+?)\s+(?:main project|capstone)\s+(?:to|as)\s+(.+)$', text, re.I)
             if m:
-                args['intern'] = _v48_clean_name(m.group(1))
+                args['intern'] = self._clean_name(m.group(1))
+                args['title'] = m.group(2).strip()
+            else:
+                m = re.search(r'(?:update|edit|change)\s+(?:intern\s+)?(.+?)\s+(?:main project|capstone)', text, re.I)
+                if m:
+                    args['intern'] = self._clean_name(m.group(1))
 
-    obj = re.search(r'objective\s+(?:to|as)\s+(.+?)(?:\s+tech stack|\s+status|$)', text, re.I)
-    if obj:
-        args['objective'] = obj.group(1).strip()
-    tech = re.search(r'tech stack\s+(?:to|as)\s+(.+?)(?:\s+status|$)', text, re.I)
-    if tech:
-        args['tech_stack'] = tech.group(1).strip()
-    status = re.search(r'\b(pending|in progress|completed)\b', lower)
-    if status:
-        args['status'] = {'pending': 'Pending', 'in progress': 'In Progress', 'completed': 'Completed'}[status.group(1)]
-    target_end = _v48_first_date(text)
-    if target_end:
-        args['target_end'] = target_end
-    args.setdefault('output', _v48_output('update_capstone'))
-    return ChatDraft(str(uuid.uuid4()), 'update_capstone', args)
+        obj = re.search(r'objective\s+(?:to|as)\s+(.+?)(?:\s+tech stack|\s+status|$)', text, re.I)
+        if obj:
+            args['objective'] = obj.group(1).strip()
+        tech = re.search(r'tech stack\s+(?:to|as)\s+(.+?)(?:\s+status|$)', text, re.I)
+        if tech:
+            args['tech_stack'] = tech.group(1).strip()
+        status = re.search(r'\b(pending|in progress|completed)\b', lower)
+        if status:
+            args['status'] = {'pending': 'Pending', 'in progress': 'In Progress', 'completed': 'Completed'}[status.group(1)]
+        target_end = self._first_date(text)
+        if target_end:
+            args['target_end'] = target_end
+        args.setdefault('output', self._stamped_output('update_capstone'))
+        return ChatDraft(str(uuid.uuid4()), 'update_capstone', args)
 
+    def _scenario_draft(self, text: str, current_workbook: str | None):
+        lower = text.lower()
+        if not any(x in lower for x in ['real-world scenario', 'real world scenario', 'scenario', 'scenrio']):
+            return None
+        args = {}
+        if current_workbook:
+            args['source'] = current_workbook
 
-def _v48_scenario_draft(self, text: str, current_workbook: str | None):
-    lower = text.lower()
-    if not any(x in lower for x in ['real-world scenario', 'real world scenario', 'scenario', 'scenrio']):
-        return None
-    args = {}
-    if current_workbook:
-        args['source'] = current_workbook
-
-    # update scenario of Saleem to something new
-    m = re.search(r'(?:update|edit|change|set)\s+(?:real-world scenario|real world scenario|scenario|scenrio)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
-    if m:
-        args['intern'] = _v48_clean_name(m.group(1))
-        args['scenario'] = m.group(2).strip()
-    else:
-        # update Saleem scenario to something new
-        m = re.search(r'(?:update|edit|change|set)\s+(?:intern\s+)?(.+?)\s+(?:real-world scenario|real world scenario|scenario|scenrio)\s+(?:to|as)\s+(.+)$', text, re.I)
+        # update scenario of Saleem to something new
+        m = re.search(r'(?:update|edit|change|set)\s+(?:real-world scenario|real world scenario|scenario|scenrio)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
         if m:
-            args['intern'] = _v48_clean_name(m.group(1))
+            args['intern'] = self._clean_name(m.group(1))
             args['scenario'] = m.group(2).strip()
         else:
-            m = re.search(r'(?:update|edit|change)\s+(?:intern\s+)?(.+?)\s+(?:real-world scenario|real world scenario|scenario|scenrio)', text, re.I)
+            # update Saleem scenario to something new
+            m = re.search(r'(?:update|edit|change|set)\s+(?:intern\s+)?(.+?)\s+(?:real-world scenario|real world scenario|scenario|scenrio)\s+(?:to|as)\s+(.+)$', text, re.I)
             if m:
-                args['intern'] = _v48_clean_name(m.group(1))
+                args['intern'] = self._clean_name(m.group(1))
+                args['scenario'] = m.group(2).strip()
+            else:
+                m = re.search(r'(?:update|edit|change)\s+(?:intern\s+)?(.+?)\s+(?:real-world scenario|real world scenario|scenario|scenrio)', text, re.I)
+                if m:
+                    args['intern'] = self._clean_name(m.group(1))
 
-    skills = re.search(r'skills\s+(?:to|as)\s+(.+?)(?:\s+deliverable|\s+due date|\s+status|$)', text, re.I)
-    if skills:
-        args['skills'] = skills.group(1).strip()
-    deliverable = re.search(r'deliverable\s+(?:to|as)\s+(.+?)(?:\s+due date|\s+status|$)', text, re.I)
-    if deliverable:
-        args['deliverable'] = deliverable.group(1).strip()
-    week = re.search(r'week\s+(\d+)', lower)
-    if week:
-        args['assigned_week'] = int(week.group(1))
-    due = _v48_first_date(text)
-    if due:
-        args['due_date'] = due
-    status = re.search(r'\b(pending|in progress|completed)\b', lower)
-    if status:
-        args['status'] = {'pending': 'Pending', 'in progress': 'In Progress', 'completed': 'Completed'}[status.group(1)]
-    args.setdefault('output', _v48_output('update_scenario'))
-    return ChatDraft(str(uuid.uuid4()), 'update_scenario', args)
+        skills = re.search(r'skills\s+(?:to|as)\s+(.+?)(?:\s+deliverable|\s+due date|\s+status|$)', text, re.I)
+        if skills:
+            args['skills'] = skills.group(1).strip()
+        deliverable = re.search(r'deliverable\s+(?:to|as)\s+(.+?)(?:\s+due date|\s+status|$)', text, re.I)
+        if deliverable:
+            args['deliverable'] = deliverable.group(1).strip()
+        week = re.search(r'week\s+(\d+)', lower)
+        if week:
+            args['assigned_week'] = int(week.group(1))
+        due = self._first_date(text)
+        if due:
+            args['due_date'] = due
+        status = re.search(r'\b(pending|in progress|completed)\b', lower)
+        if status:
+            args['status'] = {'pending': 'Pending', 'in progress': 'In Progress', 'completed': 'Completed'}[status.group(1)]
+        args.setdefault('output', self._stamped_output('update_scenario'))
+        return ChatDraft(str(uuid.uuid4()), 'update_scenario', args)
 
-
-def _v48_required_four_draft(self, text: str, current_workbook: str | None):
-    for builder in [_v48_edit_plan_draft, _v48_extend_intern_draft, _v48_capstone_draft, _v48_scenario_draft]:
-        draft = builder(self, text, current_workbook)
-        if draft:
-            return draft
-    return None
-
-
-def _v48_message(self, text: str, current_workbook: str | None = None):
-    draft = _v48_required_four_draft(self, text, current_workbook)
-    if draft:
-        return self._response_for_draft(draft)
-    return ChatService._base_message_v48(self, text, current_workbook)
-
-ChatService.message = _v48_message
-
-
-
-# v0.54 extend intern with plan chat override
-# v0.55 removed invalid LABELS global assignment for extend_intern_with_plan
-# v0.55 removed invalid REQUIRED global assignment for extend_intern_with_plan
-
-if not hasattr(ChatService, '_base_message_v54'):
-    ChatService._base_message_v54 = ChatService.message
-
-
-def _v54_chat_output(command: str):
-    return f'{command}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
-
-
-def _v54_clean(value: str) -> str:
-    value = (value or '').strip().strip(' .,:;')
-    return ' '.join(p[:1].upper() + p[1:] for p in value.split())
-
-
-def _v54_extend_with_plan_draft(self, text: str, current_workbook: str | None):
-    lower = (text or '').lower()
-    # Plan-aware extension if user says: extend X to DATE with PLAN_NAME
-    # The word "plan" is optional because users often say "with SecOps Foundation".
-    if 'extend' not in lower or 'with' not in lower:
+    def _required_four_draft(self, text: str, current_workbook: str | None):
+        for builder in [self._edit_plan_draft, self._extend_intern_draft, self._capstone_draft, self._scenario_draft]:
+            draft = builder(text, current_workbook)
+            if draft:
+                return draft
         return None
-    date_m = re.search(r'20\d{2}-\d{2}-\d{2}', text)
-    if not date_m:
-        return None
-    args = {}
-    if current_workbook:
-        args['source'] = current_workbook
-    args['new_end'] = date_m.group(0)
 
-    # Extend Habeeb to 2026-09-30 with Kubernetes Troubleshooting plan
-    # Extend Habeeb to 2026-09-30 with SecOps Foundation
-    m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}\s+with\s+(.+?)(?:\s+plan)?$', text, re.I)
-    if m:
-        args['intern'] = _v54_clean(m.group(1))
-        plan = m.group(2).strip().strip(' .,:;')
-        if 'foundation' not in plan.lower() and 'plan' not in plan.lower():
-            plan = plan[:1].upper() + plan[1:] + ' Foundation'
-        args['plan_name'] = plan
-    args['output'] = _v54_chat_output('extend_intern_with_plan')
+    def _extend_with_plan_draft(self, text: str, current_workbook: str | None):
+        lower = (text or '').lower()
+        # Plan-aware extension if user says: extend X to DATE with PLAN_NAME
+        # The word "plan" is optional because users often say "with SecOps Foundation".
+        if 'extend' not in lower or 'with' not in lower:
+            return None
+        date_m = re.search(r'20\d{2}-\d{2}-\d{2}', text)
+        if not date_m:
+            return None
+        args = {}
+        if current_workbook:
+            args['source'] = current_workbook
+        args['new_end'] = date_m.group(0)
 
-    if args.get('intern') and args.get('plan_name'):
-        args['extension_preview'] = f"Extend {args['intern']} to {args['new_end']} using {args['plan_name']}. This will generate new extension-period daily tasks, weekly projects, and update the main project/scenario to the extension focus."
-    return ChatDraft(str(uuid.uuid4()), 'extend_intern_with_plan', args)
+        # Extend Habeeb to 2026-09-30 with Kubernetes Troubleshooting plan
+        # Extend Habeeb to 2026-09-30 with SecOps Foundation
+        m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}\s+with\s+(.+?)(?:\s+plan)?$', text, re.I)
+        if m:
+            args['intern'] = self._clean_name(m.group(1))
+            plan = m.group(2).strip().strip(' .,:;')
+            if 'foundation' not in plan.lower() and 'plan' not in plan.lower():
+                plan = plan[:1].upper() + plan[1:] + ' Foundation'
+            args['plan_name'] = plan
+        args['output'] = self._stamped_output('extend_intern_with_plan')
 
+        if args.get('intern') and args.get('plan_name'):
+            args['extension_preview'] = f"Extend {args['intern']} to {args['new_end']} using {args['plan_name']}. This will generate new extension-period daily tasks, weekly projects, and update the main project/scenario to the extension focus."
+        return ChatDraft(str(uuid.uuid4()), 'extend_intern_with_plan', args)
 
-def _v54_message(self, text: str, current_workbook: str | None = None):
-    draft = _v54_extend_with_plan_draft(self, text, current_workbook)
-    if draft:
-        return self._response_for_draft(draft)
-    return ChatService._base_message_v54(self, text, current_workbook)
+    def _clean_llm_text(self, value) -> str:
+        s = str(value or "")
+        s = html.unescape(s)
+        s = re.sub(r'<br\s*/?>', '\n', s, flags=re.I)
+        s = re.sub(r'</?(strong|b|em|i|span|p|div)[^>]*>', '', s, flags=re.I)
+        s = re.sub(r'data-lexical-text="true"', '', s, flags=re.I)
+        s = re.sub(r'<[^>]+>', '', s)
+        s = re.sub(r'\s+\n', '\n', s)
+        s = re.sub(r'\n\s+', '\n', s)
+        s = re.sub(r'[ \t]+', ' ', s)
+        return s.strip()
 
-ChatService.message = _v54_message
+    def _normalize_llm_plan_payload(self, data) -> dict:
+        """Accept both top-level plan JSON and command/args JSON."""
+        if not isinstance(data, dict):
+            return {}
+        # Preferred shape because provider SYSTEM_PROMPT asks for it.
+        if isinstance(data.get("args"), dict):
+            return dict(data.get("args") or {})
+        return dict(data)
 
-# v0.55 note: extend_intern_with_plan label is handled by proposal/UI fallback.
+    def _clean_plan_weeks(self, raw_weeks, expected_count) -> list:
+        if not isinstance(raw_weeks, list):
+            return []
+        cleaned = []
+        for idx, item in enumerate(raw_weeks, start=1):
+            if not isinstance(item, dict):
+                continue
+            week_no = item.get("week") or idx
+            try:
+                week_no = int(week_no)
+            except Exception:
+                week_no = idx
+            theme = self._clean_llm_text(item.get("theme"))
+            task = self._clean_llm_text(item.get("task") or item.get("daily_task"))
+            weekly_project = self._clean_llm_text(item.get("weekly_project") or item.get("project"))
+            notes = self._clean_llm_text(item.get("notes"))
+            # Skip totally empty rows.
+            if not any([theme, task, weekly_project, notes]):
+                continue
+            cleaned.append({
+                "week": week_no,
+                "theme": theme or f"Week {week_no} Focus",
+                "task": task or "Complete practical learning tasks for this week.",
+                "weekly_project": weekly_project or "Complete a weekly practical project.",
+                "notes": notes,
+            })
+        # Keep expected week limit if the model returned too many.
+        if expected_count and len(cleaned) > expected_count:
+            cleaned = cleaned[:expected_count]
+        return cleaned
 
+    def _plan_weeks_look_usable(self, weeks) -> bool:
+        if not isinstance(weeks, list) or not weeks:
+            return False
+        bad_markers = [
+            "llm returned no detailed weeks",
+            "generated safe draft",
+            "foundation and environment setup",
+            "core concepts",
+            "hands-on practice",
+            "final demo",
+        ]
+        usable = 0
+        for w in weeks:
+            if not isinstance(w, dict):
+                continue
+            text = " ".join(str(w.get(k, "")) for k in ("theme", "task", "weekly_project", "notes")).lower()
+            if any(marker in text for marker in bad_markers):
+                continue
+            if len(str(w.get("task", "")).strip()) >= 30 and len(str(w.get("weekly_project", "")).strip()) >= 20:
+                usable += 1
+        return usable >= max(1, min(3, len(weeks)))
 
-
-# ===== v100 create-plan LLM shape + sanitize override =====
-# Fixes:
-# 1) Provider system prompt expects {"command": "...", "args": {...}},
-#    while the old plan drafter expected top-level {"plan_name": ..., "weeks": ...}.
-# 2) HTML/Lexical tags from LLM output leaked into proposal text.
-# 3) Generic safe draft appeared because valid weeks were hidden under args or invalid.
-
-import html as _v100_html
-
-def _v100_clean_text(value):
-    s = str(value or "")
-    s = _v100_html.unescape(s)
-    s = re.sub(r'<br\s*/?>', '\n', s, flags=re.I)
-    s = re.sub(r'</?(strong|b|em|i|span|p|div)[^>]*>', '', s, flags=re.I)
-    s = re.sub(r'data-lexical-text="true"', '', s, flags=re.I)
-    s = re.sub(r'<[^>]+>', '', s)
-    s = re.sub(r'\s+\n', '\n', s)
-    s = re.sub(r'\n\s+', '\n', s)
-    s = re.sub(r'[ \t]+', ' ', s)
-    return s.strip()
-
-def _v100_normalize_llm_plan_payload(data):
-    """Accept both top-level plan JSON and command/args JSON."""
-    if not isinstance(data, dict):
-        return {}
-
-    # Preferred shape because provider SYSTEM_PROMPT asks for it.
-    if isinstance(data.get("args"), dict):
-        args = dict(data.get("args") or {})
-    else:
-        args = dict(data)
-
-    return args
-
-def _v100_clean_weeks(raw_weeks, expected_count):
-    if not isinstance(raw_weeks, list):
-        return []
-
-    cleaned = []
-    for idx, item in enumerate(raw_weeks, start=1):
-        if not isinstance(item, dict):
-            continue
-
-        week_no = item.get("week") or idx
-        try:
-            week_no = int(week_no)
-        except Exception:
-            week_no = idx
-
-        theme = _v100_clean_text(item.get("theme"))
-        task = _v100_clean_text(item.get("task") or item.get("daily_task"))
-        weekly_project = _v100_clean_text(item.get("weekly_project") or item.get("project"))
-        notes = _v100_clean_text(item.get("notes"))
-
-        # Skip totally empty rows.
-        if not any([theme, task, weekly_project, notes]):
-            continue
-
-        cleaned.append({
-            "week": week_no,
-            "theme": theme or f"Week {week_no} Focus",
-            "task": task or "Complete practical learning tasks for this week.",
-            "weekly_project": weekly_project or "Complete a weekly practical project.",
-            "notes": notes,
-        })
-
-    # Keep expected week limit if the model returned too many.
-    if expected_count and len(cleaned) > expected_count:
-        cleaned = cleaned[:expected_count]
-
-    return cleaned
-
-def _v100_weeks_look_usable(weeks):
-    if not isinstance(weeks, list) or not weeks:
-        return False
-
-    bad_markers = [
-        "llm returned no detailed weeks",
-        "generated safe draft",
-        "foundation and environment setup",
-        "core concepts",
-        "hands-on practice",
-        "final demo",
-    ]
-
-    usable = 0
-    for w in weeks:
-        if not isinstance(w, dict):
-            continue
-        text = " ".join(str(w.get(k, "")) for k in ("theme", "task", "weekly_project", "notes")).lower()
-        if any(marker in text for marker in bad_markers):
-            continue
-        if len(str(w.get("task", "")).strip()) >= 30 and len(str(w.get("weekly_project", "")).strip()) >= 20:
-            usable += 1
-
-    return usable >= max(1, min(3, len(weeks)))
-
-def _v100_plan_prompt(user_text, weeks_count):
-    return f"""
+    def _build_plan_prompt(self, user_text, weeks_count) -> str:
+        return f"""
 Create a practical intern learning plan from this request:
 
 {user_text}
@@ -1244,81 +1178,78 @@ Rules:
 - Do not invent source, output, or workbook paths.
 """
 
-def _v100_draft_plan_with_llm(self, text: str, current_workbook: str | None):
-    fallback_name = self._extract_plan_name(text) or "Custom Learning Plan"
-    fallback_name = self._normalize_plan_name(fallback_name, text)
-    weeks_count = self._extract_weeks_count(text) or 8
-    source = current_workbook or ""
-    output = f"Plan_{self._safe_name(fallback_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    def _draft_plan_with_llm(self, text: str, current_workbook: str | None) -> ChatDraft:
+        fallback_name = self._extract_plan_name(text) or "Custom Learning Plan"
+        fallback_name = self._normalize_plan_name(fallback_name, text)
+        weeks_count = self._extract_weeks_count(text) or 8
+        source = current_workbook or ""
+        output = f"Plan_{self._safe_name(fallback_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
-    plan_name = fallback_name
-    description = _v100_clean_text(text)
-    weeks = []
-    generation_error = ""
+        plan_name = fallback_name
+        description = self._clean_llm_text(text)
+        weeks = []
+        generation_error = ""
 
-    if self.provider:
-        for attempt in range(2):
-            try:
-                prompt = _v100_plan_prompt(text, weeks_count)
-                if attempt == 1:
-                    prompt += """
+        if self.provider:
+            for attempt in range(2):
+                try:
+                    prompt = self._build_plan_prompt(text, weeks_count)
+                    if attempt == 1:
+                        prompt += """
 
 Your previous response was not usable. Try again.
 Make sure weeks is inside args.weeks and contains detailed topic-specific week objects.
 """
+                    raw = self.provider.complete_json(prompt)
+                    args = self._normalize_llm_plan_payload(raw)
 
-                raw = self.provider.complete_json(prompt)
-                args = _v100_normalize_llm_plan_payload(raw)
+                    candidate_name = self._clean_llm_text(args.get("plan_name")) or fallback_name
+                    candidate_name = self._normalize_plan_name(candidate_name, text)
 
-                candidate_name = _v100_clean_text(args.get("plan_name")) or fallback_name
-                candidate_name = self._normalize_plan_name(candidate_name, text)
+                    explicit_prompt_name = self._explicit_plan_name_from_prompt(text)
+                    if explicit_prompt_name:
+                        candidate_name = explicit_prompt_name
 
-                explicit_prompt_name = self._explicit_plan_name_from_prompt(text)
-                if explicit_prompt_name:
-                    candidate_name = explicit_prompt_name
+                    candidate_description = self._clean_llm_text(args.get("description")) or description
+                    candidate_weeks = self._clean_plan_weeks(args.get("weeks"), weeks_count)
 
-                candidate_description = _v100_clean_text(args.get("description")) or description
-                candidate_weeks = _v100_clean_weeks(args.get("weeks"), weeks_count)
+                    if self._plan_weeks_look_usable(candidate_weeks):
+                        plan_name = candidate_name
+                        description = candidate_description
+                        weeks = candidate_weeks
+                        break
 
-                if _v100_weeks_look_usable(candidate_weeks):
-                    plan_name = candidate_name
-                    description = candidate_description
-                    weeks = candidate_weeks
-                    break
+                    generation_error = "LLM returned no usable detailed weeks."
 
-                generation_error = "LLM returned no usable detailed weeks."
+                except Exception as e:
+                    generation_error = str(e)
 
-            except Exception as e:
-                generation_error = str(e)
+        # If LLM still fails, do NOT silently present generic fallback as a good draft.
+        # Keep deterministic fallback, but make warning clear so user should not approve blindly.
+        if not weeks:
+            weeks = self._fallback_weeks(
+                plan_name,
+                weeks_count,
+                "Plan generation fallback used because LLM did not return detailed topic-specific weeks. Regenerate or edit before approval."
+            )
 
-    # If LLM still fails, do NOT silently present generic fallback as a good draft.
-    # Keep deterministic fallback, but make warning clear so user should not approve blindly.
-    if not weeks:
-        weeks = self._fallback_weeks(
-            plan_name,
-            weeks_count,
-            "Plan generation fallback used because LLM did not return detailed topic-specific weeks. Regenerate or edit before approval."
-        )
+        # Final cleanup safety.
+        plan_name = self._clean_llm_text(plan_name) or fallback_name
+        description = self._clean_llm_text(description)
+        weeks = self._clean_plan_weeks(weeks, weeks_count)
 
-    # Final cleanup safety.
-    plan_name = _v100_clean_text(plan_name) or fallback_name
-    description = _v100_clean_text(description)
-    weeks = _v100_clean_weeks(weeks, weeks_count)
+        warnings = self._plan_quality_warnings(weeks, plan_name)
+        if generation_error:
+            warnings.append(f"LLM generation issue: {generation_error}")
+        if any("fallback" in str(w.get("notes", "")).lower() for w in weeks if isinstance(w, dict)):
+            warnings.append("This draft used fallback content. Review or regenerate before approval.")
 
-    warnings = self._plan_quality_warnings(weeks, plan_name)
-    if generation_error:
-        warnings.append(f"LLM generation issue: {generation_error}")
-    if any("fallback" in str(w.get("notes", "")).lower() for w in weeks if isinstance(w, dict)):
-        warnings.append("This draft used fallback content. Review or regenerate before approval.")
-
-    return ChatDraft(str(uuid.uuid4()), "create_plan_from_draft", {
-        "source": source,
-        "plan_name": plan_name,
-        "description": description,
-        "weeks": weeks,
-        "quality_warnings": warnings,
-        "output": output,
-    })
-
-ChatService._draft_plan_with_llm = _v100_draft_plan_with_llm
+        return ChatDraft(str(uuid.uuid4()), "create_plan_from_draft", {
+            "source": source,
+            "plan_name": plan_name,
+            "description": description,
+            "weeks": weeks,
+            "quality_warnings": warnings,
+            "output": output,
+        })
 

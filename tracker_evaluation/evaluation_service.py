@@ -158,58 +158,6 @@ def band_score(completed: int, planned: int) -> int:
     return 5
 
 
-def get_tracker_metrics(tracker_path: str, intern_name: str) -> dict[str, Any]:
-    if parse_workbook is None:
-        return {}
-    data = parse_workbook(tracker_path)
-    intern = None
-    for item in getattr(data, 'interns', []) or []:
-        if normalize_name(item.name) == normalize_name(intern_name):
-            intern = item
-            break
-    if not intern:
-        # closest tracker intern fallback
-        best = None
-        best_score = 0
-        for item in getattr(data, 'interns', []) or []:
-            sc = similarity(item.name, intern_name)
-            if sc > best_score:
-                best = item; best_score = sc
-        intern = best
-    if not intern:
-        return {}
-
-    tasks = getattr(intern, 'tasks', []) or []
-    projects = getattr(intern, 'projects', []) or []
-    daily_planned = len(tasks)
-    daily_done = sum(1 for row in tasks if len(row) > 4 and status_done(row[4]))
-    weekly_planned = len(projects)
-    weekly_done = sum(1 for row in projects if len(row) > 5 and status_done(row[5]))
-
-    start = intern.main_row[3] if len(intern.main_row) > 3 else ''
-    end = intern.main_row[4] if len(intern.main_row) > 4 else ''
-    plan = getattr(intern, 'plan_name', '') or ''
-    main_project = intern.main_row[0] if len(intern.main_row) > 0 else ''
-    scenario = intern.scenario_row[0] if len(intern.scenario_row) > 0 else ''
-
-    return {
-        'matched_tracker_name': intern.name,
-        'plan': plan,
-        'start': start.strftime('%Y-%m-%d') if hasattr(start, 'strftime') else str(start or ''),
-        'end': end.strftime('%Y-%m-%d') if hasattr(end, 'strftime') else str(end or ''),
-        'daily_done': daily_done,
-        'daily_planned': daily_planned,
-        'daily_pct': daily_done / daily_planned if daily_planned else 0,
-        'weekly_done': weekly_done,
-        'weekly_planned': weekly_planned,
-        'weekly_pct': weekly_done / weekly_planned if weekly_planned else 0,
-        'daily_score': band_score(daily_done, daily_planned),
-        'weekly_score': band_score(weekly_done, weekly_planned),
-        'main_project': str(main_project or ''),
-        'scenario': str(scenario or ''),
-    }
-
-
 def build_questions() -> list[dict[str, Any]]:
     return [
         {
@@ -247,31 +195,6 @@ def heuristic_score(answer: str) -> int:
     if any(w in a for w in ['poor', 'rarely', 'minimal', 'late', 'struggled']):
         return 1
     return 3 if answer.strip() else 0
-
-
-def suggest_score(criterion: str, answer: str, tracker_context: dict[str, Any]) -> dict[str, Any]:
-    provider = _llm_provider()
-    rubric = RUBRICS.get(criterion, '')
-    if provider:
-        prompt = f'''
-You are assisting an admin with an intern evaluation. Return ONLY JSON.
-Criterion: {criterion}
-Rubric: {rubric}
-Tracker context: {json.dumps(tracker_context, default=str)}
-Evaluator answer: {answer}
-
-Return shape:
-{{"score": 0-5, "rationale": "brief specific rationale based only on the answer and tracker context"}}
-'''
-        try:
-            data = provider.complete_json(prompt)
-            score = int(data.get('score', heuristic_score(answer)))
-            score = max(0, min(5, score))
-            return {'score': score, 'rationale': str(data.get('rationale', '')).strip() or 'Suggested from evaluator answer.'}
-        except Exception:
-            pass
-    score = heuristic_score(answer)
-    return {'score': score, 'rationale': 'Suggested from evaluator answer using rubric keywords. Admin should review/edit.'}
 
 
 def _find_cell(ws, text: str):

@@ -12,6 +12,7 @@ def now():
 class UserService:
     def __init__(self):
         init_db()
+        self.ensure_super_admin()
 
     def authenticate(self, email: str, password: str):
         conn = get_conn()
@@ -77,147 +78,97 @@ class UserService:
         conn.commit()
         conn.close()
 
-
-# v0.61 approval-role user service extensions
-# Adds Super Admin/Admin/User approval workflow while preserving older methods.
-
-def _v61_us_get_user_by_id(self, user_id: int):
-    conn = get_conn()
-    row = conn.execute('SELECT id,name,email,department,role,status,created_at,last_login,last_logout FROM users WHERE id=?', (user_id,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def _v61_us_get_user_by_email(self, email: str):
-    conn = get_conn()
-    row = conn.execute('SELECT * FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
-
-def _v61_us_ensure_super_admin(self):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) AS c FROM users WHERE role='Super Admin'")
-    count = cur.fetchone()['c']
-    if count == 0:
-        # Temporary bootstrap account. Super Admin should change this after first login.
-        cur.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
-                       VALUES(?,?,?,?,?,?,?)''', (
-            'Super Admin', 'superadmin@example.com', hash_password('superadmin123'), 'Management', 'Super Admin', 'Active', now()
-        ))
-    conn.commit()
-    conn.close()
-
-
-def _v61_us_signup(self, data: dict):
-    name = (data.get('name') or '').strip()
-    email = (data.get('email') or '').strip()
-    password = data.get('password') or ''
-    department = (data.get('department') or '').strip()
-    if not name or not email or not password:
-        raise ValueError('name, email, and password are required')
-    conn = get_conn()
-    conn.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
-                    VALUES(?,?,?,?,?,?,?)''', (
-        name, email, hash_password(password), department, 'User', 'Pending', now()
-    ))
-    conn.commit()
-    conn.close()
-
-
-def _v61_us_approve(self, user_id: int, role: str):
-    role = role if role in {'Admin', 'User'} else 'User'
-    conn = get_conn()
-    conn.execute('UPDATE users SET role=?, status=? WHERE id=?', (role, 'Active', user_id))
-    conn.commit()
-    conn.close()
-
-
-def _v61_us_reject(self, user_id: int):
-    conn = get_conn()
-    conn.execute('UPDATE users SET status=? WHERE id=?', ('Rejected', user_id))
-    conn.commit()
-    conn.close()
-
-
-def _v61_us_deactivate(self, user_id: int):
-    conn = get_conn()
-    conn.execute('UPDATE users SET status=? WHERE id=?', ('Inactive', user_id))
-    conn.commit()
-    conn.close()
-
-
-def _v61_us_update_role(self, user_id: int, role: str):
-    if role not in {'Admin', 'User'}:
-        raise ValueError('role must be Admin or User')
-    conn = get_conn()
-    conn.execute('UPDATE users SET role=? WHERE id=?', (role, user_id))
-    conn.commit()
-    conn.close()
-
-
-def _v61_us_update_profile(self, current_email: str, data: dict):
-    fields = []
-    values = []
-    if data.get('name'):
-        fields.append('name=?'); values.append(data['name'].strip())
-    if data.get('email'):
-        fields.append('email=?'); values.append(data['email'].strip())
-    if data.get('department'):
-        fields.append('department=?'); values.append(data['department'].strip())
-    if data.get('password'):
-        fields.append('password=?'); values.append(hash_password(data['password']))
-    if not fields:
-        return
-    values.append(current_email)
-    conn = get_conn()
-    conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE lower(email)=lower(?)", values)
-    conn.commit()
-    conn.close()
-
-# Attach methods.
-UserService.get_user_by_id = _v61_us_get_user_by_id
-UserService.get_user_by_email = _v61_us_get_user_by_email
-UserService.ensure_super_admin = _v61_us_ensure_super_admin
-UserService.signup = _v61_us_signup
-UserService.approve_user = _v61_us_approve
-UserService.reject_user = _v61_us_reject
-UserService.deactivate_user = _v61_us_deactivate
-UserService.update_role = _v61_us_update_role
-UserService.update_profile = _v61_us_update_profile
-
-# Wrap __init__ to ensure one bootstrap Super Admin exists.
-if not hasattr(UserService, '_base_init_v61'):
-    UserService._base_init_v61 = UserService.__init__
-    def _v61_init(self, *args, **kwargs):
-        UserService._base_init_v61(self, *args, **kwargs)
-        self.ensure_super_admin()
-    UserService.__init__ = _v61_init
-
-
-# v0.63 signup bad request fix
-# Gives clear errors for duplicate/blank signup requests and ensures hashing works.
-def _v63_us_signup(self, data: dict):
-    name = (data.get('name') or '').strip()
-    email = (data.get('email') or '').strip().lower()
-    password = data.get('password') or ''
-    department = (data.get('department') or '').strip()
-    if not name or not email or not password:
-        raise ValueError('Name, email, and password are required.')
-    if '@' not in email:
-        raise ValueError('Please enter a valid email address.')
-    conn = get_conn()
-    existing = conn.execute('SELECT email,status,role FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
-    if existing:
+    def get_user_by_id(self, user_id: int):
+        conn = get_conn()
+        row = conn.execute('SELECT id,name,email,department,role,status,created_at,last_login,last_logout FROM users WHERE id=?', (user_id,)).fetchone()
         conn.close()
-        status = existing['status'] if 'status' in existing.keys() else ''
-        raise ValueError(f'An account request/user already exists for {email}. Current status: {status}.')
-    conn.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
-                    VALUES(?,?,?,?,?,?,?)''', (
-        name, email, hash_password(password), department, 'User', 'Pending', now()
-    ))
-    conn.commit()
-    conn.close()
+        return dict(row) if row else None
 
-UserService.signup = _v63_us_signup
+    def get_user_by_email(self, email: str):
+        conn = get_conn()
+        row = conn.execute('SELECT * FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def ensure_super_admin(self):
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) AS c FROM users WHERE role='Super Admin'")
+        count = cur.fetchone()['c']
+        if count == 0:
+            # Temporary bootstrap account. Super Admin should change this after first login.
+            cur.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
+                           VALUES(?,?,?,?,?,?,?)''', (
+                'Super Admin', 'superadmin@example.com', hash_password('superadmin123'), 'Management', 'Super Admin', 'Active', now()
+            ))
+        conn.commit()
+        conn.close()
+
+    def signup(self, data: dict):
+        """Signup with clear errors for duplicate/blank requests."""
+        name = (data.get('name') or '').strip()
+        email = (data.get('email') or '').strip().lower()
+        password = data.get('password') or ''
+        department = (data.get('department') or '').strip()
+        if not name or not email or not password:
+            raise ValueError('Name, email, and password are required.')
+        if '@' not in email:
+            raise ValueError('Please enter a valid email address.')
+        conn = get_conn()
+        existing = conn.execute('SELECT email,status,role FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
+        if existing:
+            conn.close()
+            status = existing['status'] if 'status' in existing.keys() else ''
+            raise ValueError(f'An account request/user already exists for {email}. Current status: {status}.')
+        conn.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
+                        VALUES(?,?,?,?,?,?,?)''', (
+            name, email, hash_password(password), department, 'User', 'Pending', now()
+        ))
+        conn.commit()
+        conn.close()
+
+    def approve_user(self, user_id: int, role: str):
+        role = role if role in {'Admin', 'User'} else 'User'
+        conn = get_conn()
+        conn.execute('UPDATE users SET role=?, status=? WHERE id=?', (role, 'Active', user_id))
+        conn.commit()
+        conn.close()
+
+    def reject_user(self, user_id: int):
+        conn = get_conn()
+        conn.execute('UPDATE users SET status=? WHERE id=?', ('Rejected', user_id))
+        conn.commit()
+        conn.close()
+
+    def deactivate_user(self, user_id: int):
+        conn = get_conn()
+        conn.execute('UPDATE users SET status=? WHERE id=?', ('Inactive', user_id))
+        conn.commit()
+        conn.close()
+
+    def update_role(self, user_id: int, role: str):
+        if role not in {'Admin', 'User'}:
+            raise ValueError('role must be Admin or User')
+        conn = get_conn()
+        conn.execute('UPDATE users SET role=? WHERE id=?', (role, user_id))
+        conn.commit()
+        conn.close()
+
+    def update_profile(self, current_email: str, data: dict):
+        fields = []
+        values = []
+        if data.get('name'):
+            fields.append('name=?'); values.append(data['name'].strip())
+        if data.get('email'):
+            fields.append('email=?'); values.append(data['email'].strip())
+        if data.get('department'):
+            fields.append('department=?'); values.append(data['department'].strip())
+        if data.get('password'):
+            fields.append('password=?'); values.append(hash_password(data['password']))
+        if not fields:
+            return
+        values.append(current_email)
+        conn = get_conn()
+        conn.execute(f"UPDATE users SET {', '.join(fields)} WHERE lower(email)=lower(?)", values)
+        conn.commit()
+        conn.close()
