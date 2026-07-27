@@ -1,2 +1,0 @@
-UPDATED: web\evaluation.html
-- Added weekly score source guard/warning script

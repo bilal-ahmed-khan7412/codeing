@@ -1,5 +1,0 @@
-v0.82 applied.
-Removed the v0.81 forced review-panel layout.
-Kept evaluation as a native step workflow.
-Added role-aware navbar: Evaluation visible to Admin/Super Admin only.
-Updated page: D:\OneDrive - Systems Limited\Documents\thurs\v13\intern_tracker_system_v0\web\evaluation.html

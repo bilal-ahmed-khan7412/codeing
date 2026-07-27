@@ -6,17 +6,6 @@ from tracker_services.plan_service import PlanService
 from tracker_commands.validator import CommandValidator
 
 
-def _normalize_holiday_args_v49_executor(args: dict):
-    scope = str(args.get('scope') or '').strip().lower()
-    intern_name = str(args.get('intern_name') or '').strip()
-    if scope in {'all', 'all interns', 'everyone', 'global', 'company-wide', 'company wide', ''}:
-        args['scope'] = 'global'
-        args.pop('intern_name', None)
-    elif intern_name:
-        args['scope'] = 'intern'
-    else:
-        args['scope'] = 'global'
-
 class CommandExecutor:
     def __init__(self):
         self.validator = CommandValidator()
@@ -29,6 +18,15 @@ class CommandExecutor:
         item = self.validator.validate(payload)
         command = item["command"]
         args = item["args"]
+        if command == "extend_intern_with_plan":
+            return self.plan_service.extend_intern_with_plan(
+                args["source"],
+                args["intern"],
+                args["new_end"],
+                args["plan_name"],
+                args.get("output"),
+                bool(args.get("update_main_project", True)),
+            )
         if command == "create_workbook":
             return self.workbook_service.create_fresh_workbook(args["output"])
         if command == "add_intern_with_plan":
@@ -68,26 +66,3 @@ class CommandExecutor:
         if command == "add_intern":
             return self.intern_service.add_intern_from_json(args["source"], args["spec"], args.get("output"))
         raise ValueError(f"Executor has no handler for command: {command}")
-
-
-# v0.54 executor override for extend_intern_with_plan
-if not hasattr(CommandExecutor, '_base_execute_v54'):
-    CommandExecutor._base_execute_v54 = CommandExecutor.execute
-
-
-def _v54_execute(self, payload: dict):
-    command = payload.get('command')
-    if command == 'extend_intern_with_plan':
-        item = self.validator.validate(payload)
-        args = item['args']
-        return self.plan_service.extend_intern_with_plan(
-            args['source'],
-            args['intern'],
-            args['new_end'],
-            args['plan_name'],
-            args.get('output'),
-            bool(args.get('update_main_project', True))
-        )
-    return CommandExecutor._base_execute_v54(self, payload)
-
-CommandExecutor.execute = _v54_execute
