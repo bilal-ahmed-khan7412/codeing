@@ -77,8 +77,9 @@ if not hasattr(CommandExecutor, '_base_execute_v54'):
 
 def _v54_execute(self, payload: dict):
     command = payload.get('command')
-    args = payload.get('args') or {}
     if command == 'extend_intern_with_plan':
+        item = self.validator.validate(payload)
+        args = item['args']
         return self.plan_service.extend_intern_with_plan(
             args['source'],
             args['intern'],

@@ -36,6 +36,11 @@ COMMAND_SCHEMAS = {
         "optional": ["output"],
         "description": "Extend intern end date and add daily tasks, weekly updates, weekly projects."
     },
+    "extend_intern_with_plan": {
+        "required": ["source", "intern", "new_end", "plan_name"],
+        "optional": ["output", "update_main_project"],
+        "description": "Extend intern end date using a second plan as context for the extension period's daily tasks, weekly updates, and weekly projects."
+    },
     "edit_task": {
         "required": ["source", "intern", "task_ref"],
         "optional": ["date", "week", "theme", "task", "status", "remarks", "output"],

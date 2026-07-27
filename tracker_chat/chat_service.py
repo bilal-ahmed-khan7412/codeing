@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from tracker_commands.executor import CommandExecutor
-from tracker_chat.intern_sheet_drafter import InternSheetDrafter
+from tracker_chat.intern_sheet_drafter import InternSheetDrafter, resolve_workbook_path
 from tracker_chat.llm_intent_parser import LLMIntentParser
 from tracker_excel.renderer.parser import parse_workbook
 
@@ -24,6 +24,7 @@ COMMAND_LABELS = {
     'render_workbook': 'Render/Clean Uploaded Workbook',
     'summary': 'Generate Progress Summary',
     'extend_intern': 'Extend Intern',
+    'extend_intern_with_plan': 'Extend Intern With Plan',
     'edit_task': 'Edit Task',
     'update_task_status': 'Update Task Status',
     'update_capstone': 'Update Capstone/Main Project',
@@ -46,6 +47,7 @@ REQUIRED = {
     'render_workbook': ['source', 'output'],
     'summary': ['workbook'],
     'extend_intern': ['source', 'intern', 'new_end', 'output'],
+    'extend_intern_with_plan': ['source', 'intern', 'new_end', 'plan_name', 'output'],
     'edit_task': ['source', 'intern', 'task_ref', 'output'],
     'update_task_status': ['source', 'intern', 'task_ref', 'status', 'output'],
     'update_capstone': ['source', 'intern', 'output'],
@@ -132,14 +134,16 @@ class ChatService:
         if not draft:
             return {'ok': False, 'error': 'Draft not found'}
         # Try LLM field extraction for the active draft first. This avoids brittle
-        # issues such as lowercase names. Regex below remains fallback.
+        # issues such as lowercase names. Regex below remains fallback when no LLM
+        # provider is configured or the LLM parse doesn't match the active command.
         parsed = self.intent_parser.parse(text, active_command=draft.command)
         if parsed and parsed.get('command') == draft.command:
             for k, v in (parsed.get('args') or {}).items():
                 if v not in [None, '', []]:
                     draft.args[k] = v
             self._force_enrich_ready_add_intern_with_plan(draft)
-        return self._response_for_draft(draft)
+            return self._response_for_draft(draft)
+
         lower = text.lower()
         args = draft.args
 
@@ -235,6 +239,7 @@ class ChatService:
         missing = self._missing(draft)
         if not missing:
             self._force_enrich_ready_add_intern_with_plan(draft)
+            self._enrich_extend_intern_with_plan(draft)
         if missing:
             draft.status = 'needs_more_info'
             self.drafts[draft.draft_id] = draft
@@ -249,6 +254,8 @@ class ChatService:
             }
         if draft.command == 'add_intern_with_plan':
             self._enrich_add_intern_with_plan(draft)
+        if draft.command == 'summary':
+            return self._execute_readonly_summary(draft)
         draft.status = 'awaiting_approval'
         draft.summary = self._summary(draft)
         self.drafts[draft.draft_id] = draft
@@ -261,6 +268,83 @@ class ChatService:
             'label': COMMAND_LABELS.get(draft.command, draft.command),
             'args': draft.args,
         }
+
+    def _execute_readonly_summary(self, draft: ChatDraft) -> dict:
+        """Summary requests are read-only: execute immediately, no approval step."""
+        result = self.executor.execute({'command': draft.command, 'args': draft.args})
+        self.drafts.pop(draft.draft_id, None)
+        return {
+            'ok': result.ok,
+            'type': 'result',
+            'draft_id': draft.draft_id,
+            'message': result.message,
+            'command': draft.command,
+            'readonly': True,
+            'requires_approval': False,
+            'needs_approval': False,
+            'proposal': None,
+            'draft': None,
+            'output_path': result.output_path,
+            'data': result.data,
+        }
+
+    def _enrich_extend_intern_with_plan(self, draft: ChatDraft):
+        """Populate the extension-period preview for Extend Intern With Plan.
+
+        Mirrors _enrich_add_intern_with_plan: does not create the workbook, only
+        fills in-memory preview fields (current/new end dates, extension focus,
+        week-level schedule) so the user can review before approval.
+        """
+        if not draft or draft.command != 'extend_intern_with_plan':
+            return
+        args = draft.args
+        required = ['source', 'intern', 'new_end', 'plan_name']
+        if any(not args.get(k) for k in required):
+            return
+        if args.get('extension_schedule_preview'):
+            return
+        try:
+            source_path = resolve_workbook_path(args.get('source'))
+            data = parse_workbook(source_path)
+            intern_obj = None
+            for item in data.interns:
+                if item.name.strip().lower() == str(args.get('intern')).strip().lower():
+                    intern_obj = item
+                    break
+            if not intern_obj:
+                return
+            current_end = intern_obj.main_row[4] if len(intern_obj.main_row) > 4 else None
+            if not isinstance(current_end, datetime):
+                return
+            new_end_dt = datetime.fromisoformat(str(args.get('new_end')))
+            extension_start = current_end + timedelta(days=1)
+            while extension_start.weekday() >= 5:
+                extension_start += timedelta(days=1)
+            if extension_start.date() > new_end_dt.date():
+                return
+
+            draft_sheet = self.intern_sheet_drafter.draft(
+                source_path,
+                str(args.get('intern')),
+                extension_start.strftime('%Y-%m-%d'),
+                new_end_dt.strftime('%Y-%m-%d'),
+                str(args.get('plan_name')),
+            )
+            main = draft_sheet.get('main_project') or {}
+            scenario = draft_sheet.get('scenario') or {}
+            weeks = draft_sheet.get('weeks') or []
+
+            args['current_end'] = current_end.strftime('%Y-%m-%d')
+            args['extension_start'] = extension_start.strftime('%Y-%m-%d')
+            args['extension_main_title'] = main.get('title', '')
+            args['extension_objective'] = main.get('objective', '')
+            args['extension_tech_stack'] = main.get('tech_stack', '')
+            args['extension_scenario'] = scenario.get('scenario', '')
+            args['extension_skills'] = scenario.get('skills', '')
+            args['extension_deliverable'] = scenario.get('deliverable', '')
+            args['extension_schedule_preview'] = weeks
+        except Exception as e:
+            args['extension_preview_error'] = str(e)
 
 
     def _is_explicit_plan_create(self, text: str) -> bool:
@@ -294,73 +378,6 @@ class ChatService:
         if any(x in lower for x in blockers):
             return False
         return any(x in lower for x in ['create', 'make', 'draft', 'generate', 'build'])
-
-    def _draft_plan_with_llm(self, text: str, current_workbook: str | None) -> ChatDraft:
-        fallback_name = self._extract_plan_name(text) or 'Custom Learning Plan'
-        fallback_name = self._normalize_plan_name(fallback_name, text)
-        weeks_count = self._extract_weeks_count(text) or 8
-        source = current_workbook or ''
-        output = f"Plan_{self._safe_name(fallback_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        if self.provider:
-            try:
-                prompt = f"""
-Create a practical intern learning plan from this request:
-{text}
-
-Return ONLY JSON with this exact shape:
-{{
-  "plan_name": "short plan name",
-  "description": "one sentence description",
-  "weeks": [
-    {{"week": 1, "theme": "...", "task": "...", "weekly_project": "...", "notes": "..."}}
-  ]
-}}
-Rules:
-- Create {weeks_count} weeks unless user clearly asked otherwise.
-- Intern plan should be practical, beginner-friendly if level is unclear.
-- Do not include markdown.
-"""
-                data = self.provider.complete_json(prompt)
-                plan_name = data.get('plan_name') or fallback_name
-                plan_name = self._normalize_plan_name(plan_name, text)
-                explicit_prompt_name = self._explicit_plan_name_from_prompt(text)
-                if explicit_prompt_name:
-                    plan_name = explicit_prompt_name
-                description = data.get('description') or text
-                weeks = data.get('weeks') or []
-                if not isinstance(weeks, list) or not weeks:
-                    weeks = self._fallback_weeks(plan_name, weeks_count, 'LLM returned no detailed weeks; generated safe draft.')
-                lower_text = text.lower()
-                if 'openshift' in lower_text and 'openshift' not in plan_name.lower():
-                    plan_name = 'OpenShift Foundation'
-                    weeks = self._fallback_weeks(plan_name, weeks_count, 'Adjusted to OpenShift based on user request.')
-                if ('infosec' in lower_text or 'information security' in lower_text or 'cybersecurity' in lower_text or 'cyber security' in lower_text) and all(x not in plan_name.lower() for x in ['security', 'infosec', 'cyber']):
-                    plan_name = 'Information Security Foundation'
-                    weeks = self._fallback_weeks(plan_name, weeks_count, 'Adjusted to Information Security based on user request.')
-                if ('deep learning' in lower_text or 'deeplearning' in lower_text) and 'deep learning' not in plan_name.lower():
-                    plan_name = 'Deep Learning Foundation'
-                    weeks = self._fallback_weeks(plan_name, weeks_count, 'Adjusted to Deep Learning based on user request.')
-                return ChatDraft(str(uuid.uuid4()), 'create_plan_from_draft', {
-                    'source': source,
-                    'plan_name': plan_name,
-                    'description': description,
-                    'weeks': weeks,
-                    'quality_warnings': self._plan_quality_warnings(weeks, plan_name),
-                    'output': output,
-                })
-            except Exception as e:
-                # Fall back to deterministic draft but expose the error in notes.
-                weeks = self._fallback_weeks(fallback_name, weeks_count, f'LLM draft failed: {e}')
-        else:
-            weeks = self._fallback_weeks(fallback_name, weeks_count, '')
-        fallback_name = self._normalize_plan_name(fallback_name, text)
-        return ChatDraft(str(uuid.uuid4()), 'create_plan_from_draft', {
-            'source': source,
-            'plan_name': fallback_name,
-            'description': text,
-            'weeks': weeks,
-            'output': output,
-        })
 
     def _fallback_weeks(self, plan_name: str, count: int, note: str) -> list[dict]:
         lower = plan_name.lower()
@@ -1094,599 +1111,6 @@ ChatService.message = _v54_message
 
 # v0.55 note: extend_intern_with_plan label is handled by proposal/UI fallback.
 
-
-# v0.60 extend intern with plan preview enrichment
-# Shows the extension plan before approval. Does not change execution logic.
-if not hasattr(ChatService, '_base_response_for_draft_v60'):
-    ChatService._base_response_for_draft_v60 = ChatService._response_for_draft
-
-
-def _v60_resolve_workbook(value: str):
-    from pathlib import Path
-    base = Path(__file__).resolve().parents[1]
-    if not value:
-        return value
-    p = Path(value)
-    if p.exists():
-        return str(p)
-    for folder in [base / 'outputs', base / 'uploads', base]:
-        c = folder / Path(value).name
-        if c.exists():
-            return str(c)
-    return value
-
-
-def _v60_enrich_extend_with_plan(self, draft):
-    if not draft or draft.command != 'extend_intern_with_plan':
-        return
-    args = draft.args
-    required = ['source', 'intern', 'new_end', 'plan_name']
-    if any(not args.get(k) for k in required):
-        return
-    if args.get('extension_schedule_preview'):
-        return
-    try:
-        from datetime import datetime, timedelta
-        from tracker_excel.renderer.parser import parse_workbook
-        from tracker_chat.intern_sheet_drafter import InternSheetDrafter
-
-        source_path = _v60_resolve_workbook(args.get('source'))
-        data = parse_workbook(source_path)
-        intern_obj = None
-        for item in data.interns:
-            if item.name.strip().lower() == str(args.get('intern')).strip().lower():
-                intern_obj = item
-                break
-        if not intern_obj:
-            return
-        current_end = intern_obj.main_row[4] if len(intern_obj.main_row) > 4 else None
-        if not isinstance(current_end, datetime):
-            return
-        new_end_dt = datetime.fromisoformat(str(args.get('new_end')))
-        extension_start = current_end + timedelta(days=1)
-        while extension_start.weekday() >= 5:
-            extension_start += timedelta(days=1)
-        if extension_start.date() > new_end_dt.date():
-            return
-
-        drafter = InternSheetDrafter()
-        draft_sheet = drafter.draft(
-            source_path,
-            str(args.get('intern')),
-            extension_start.strftime('%Y-%m-%d'),
-            new_end_dt.strftime('%Y-%m-%d'),
-            str(args.get('plan_name')),
-        )
-        main = draft_sheet.get('main_project') or {}
-        scenario = draft_sheet.get('scenario') or {}
-        weeks = draft_sheet.get('weeks') or []
-
-        args['current_end'] = current_end.strftime('%Y-%m-%d')
-        args['extension_start'] = extension_start.strftime('%Y-%m-%d')
-        args['extension_main_title'] = main.get('title', '')
-        args['extension_objective'] = main.get('objective', '')
-        args['extension_tech_stack'] = main.get('tech_stack', '')
-        args['extension_scenario'] = scenario.get('scenario', '')
-        args['extension_skills'] = scenario.get('skills', '')
-        args['extension_deliverable'] = scenario.get('deliverable', '')
-        args['extension_schedule_preview'] = weeks
-    except Exception as e:
-        args['extension_preview_error'] = str(e)
-
-
-def _v60_response_for_draft(self, draft):
-    _v60_enrich_extend_with_plan(self, draft)
-    return ChatService._base_response_for_draft_v60(self, draft)
-
-ChatService._response_for_draft = _v60_response_for_draft
-
-
-# v0.84 read-only summary no proposal
-# Summary/progress questions are read-only and should not trigger Approve/Edit/Cancel.
-# This wrapper is deliberately defensive across earlier patch versions.
-_V84_READONLY_SUMMARY_COMMANDS = {
-    'summary',
-    'progress_summary',
-    'intern_summary',
-    'generate_summary',
-    'status_summary',
-    'dashboard_summary',
-    'show_progress',
-    'compare_interns',
-}
-
-
-def _v84_command_name(draft):
-    return str(getattr(draft, 'command', '') or (draft.get('command') if isinstance(draft, dict) else '')).strip()
-
-
-def _v84_draft_args(draft):
-    if isinstance(draft, dict):
-        return draft.get('args') or draft.get('arguments') or {}
-    return getattr(draft, 'args', None) or getattr(draft, 'arguments', None) or {}
-
-
-def _v84_is_readonly_summary(draft):
-    cmd = _v84_command_name(draft).lower()
-    if cmd in _V84_READONLY_SUMMARY_COMMANDS:
-        return True
-    # Some versions use a generic command with an intent argument.
-    args = _v84_draft_args(draft)
-    intent = str(args.get('intent', '') or args.get('type', '') or '').lower() if isinstance(args, dict) else ''
-    return intent in _V84_READONLY_SUMMARY_COMMANDS
-
-
-def _v84_result_text(result):
-    if result is None:
-        return ''
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
-        for key in ('message', 'summary', 'text', 'content', 'response', 'output'):
-            if result.get(key):
-                return str(result.get(key))
-        return str(result)
-    for attr in ('message', 'summary', 'text', 'content', 'response', 'output'):
-        if hasattr(result, attr):
-            val = getattr(result, attr)
-            if val:
-                return str(val)
-    return str(result)
-
-
-def _v84_success(result):
-    if result is None:
-        return False
-    if isinstance(result, dict):
-        return bool(result.get('ok', result.get('success', True)))
-    if hasattr(result, 'success'):
-        return bool(getattr(result, 'success'))
-    if hasattr(result, 'ok'):
-        return bool(getattr(result, 'ok'))
-    return True
-
-
-def _v84_execute_using_existing_hooks(self, draft):
-    cmd = _v84_command_name(draft)
-    args = _v84_draft_args(draft)
-
-    # 1) Try service instance hooks that may already exist.
-    for method_name in (
-        '_execute_draft', 'execute_draft', '_run_draft', 'run_draft',
-        '_execute_command', 'execute_command', '_run_command', 'run_command',
-        '_apply_draft', 'apply_draft', '_approve_draft', 'approve_draft',
-    ):
-        method = getattr(self, method_name, None)
-        if callable(method):
-            try:
-                try:
-                    return method(draft)
-                except TypeError:
-                    return method(cmd, args)
-            except Exception:
-                continue
-
-    # 2) Try attached executor objects.
-    for attr_name in ('executor', 'command_executor', '_executor', '_command_executor'):
-        executor = getattr(self, attr_name, None)
-        if executor is None:
-            continue
-        for method_name in ('execute', 'run', 'apply'):
-            method = getattr(executor, method_name, None)
-            if callable(method):
-                try:
-                    try:
-                        return method(cmd, args)
-                    except TypeError:
-                        return method(draft)
-                except Exception:
-                    continue
-
-    # 3) Try importing command executor class from the project.
-    try:
-        from tracker_commands.executor import CommandExecutor
-        executor = CommandExecutor()
-        for method_name in ('execute', 'run', 'apply'):
-            method = getattr(executor, method_name, None)
-            if callable(method):
-                try:
-                    try:
-                        return method(cmd, args)
-                    except TypeError:
-                        return method(draft)
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    # 4) Known summary service fallback if available.
-    try:
-        from tracker_services.summary_service import SummaryService
-        svc = SummaryService()
-        for method_name in ('summary', 'generate_summary', 'progress_summary', 'intern_summary'):
-            method = getattr(svc, method_name, None)
-            if callable(method):
-                try:
-                    try:
-                        return method(**args) if isinstance(args, dict) else method(args)
-                    except TypeError:
-                        return method(args)
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    return None
-
-
-def _v84_direct_response_from_result(result, fallback_message='Progress summary generated.'):
-    text = _v84_result_text(result).strip() or fallback_message
-    return {
-        'ok': True,
-        'message': text,
-        'response': text,
-        'content': text,
-        'command': _v84_command_name(result) if not isinstance(result, dict) else result.get('command', 'summary'),
-        'readonly': True,
-        'requires_approval': False,
-        'needs_approval': False,
-        'proposal': None,
-        'draft': None,
-        'data': result if isinstance(result, dict) else None,
-    }
-
-
-def _v84_mutate_response_readonly(response):
-    # If execution shape is unknown, at least prevent frontend approval mode.
-    if isinstance(response, dict):
-        response['readonly'] = True
-        response['requires_approval'] = False
-        response['needs_approval'] = False
-        response['proposal'] = None
-        response['draft'] = None
-        msg = str(response.get('message') or response.get('response') or response.get('content') or '')
-        if 'Review the proposal' in msg or 'approve, edit, or cancel' in msg.lower():
-            response['message'] = 'Generated progress summary.'
-            response['response'] = response['message']
-        return response
-    for attr, val in [('readonly', True), ('requires_approval', False), ('needs_approval', False), ('proposal', None), ('draft', None)]:
-        try:
-            setattr(response, attr, val)
-        except Exception:
-            pass
-    return response
-
-
-if not hasattr(ChatService, '_base_response_for_draft_v84') and hasattr(ChatService, '_response_for_draft'):
-    ChatService._base_response_for_draft_v84 = ChatService._response_for_draft
-
-    def _v84_response_for_draft(self, draft):
-        if _v84_is_readonly_summary(draft):
-            result = _v84_execute_using_existing_hooks(self, draft)
-            if result is not None and _v84_success(result):
-                return _v84_direct_response_from_result(result, 'Generated progress summary.')
-            # Fallback: let original generate whatever it can, then strip proposal mode.
-            base_response = ChatService._base_response_for_draft_v84(self, draft)
-            return _v84_mutate_response_readonly(base_response)
-        return ChatService._base_response_for_draft_v84(self, draft)
-
-    ChatService._response_for_draft = _v84_response_for_draft
-
-
-# v0.85 execute read-only summaries immediately
-# Read-only progress/summary commands should not enter approval flow.
-# This patch is intentionally broad because older patches used different command names.
-_V85_READONLY_COMMAND_KEYWORDS = {
-    'summary', 'summarize', 'summarise', 'progress', 'progress_summary', 'intern_summary',
-    'generate_summary', 'generate_progress_summary', 'status_summary', 'dashboard_summary',
-    'show_progress', 'compare_interns', 'intern_status', 'status', 'how_is_intern_doing',
-}
-
-_V85_READONLY_TEXT_MARKERS = (
-    'generate a progress summary',
-    'generated progress summary',
-    'progress summary for the current workbook',
-    'how is ',
-    ' how is ',
-    'doing?',
-)
-
-
-def _v85_get(obj, key, default=None):
-    if obj is None:
-        return default
-    if isinstance(obj, dict):
-        return obj.get(key, default)
-    return getattr(obj, key, default)
-
-
-def _v85_set(obj, key, value):
-    if obj is None:
-        return
-    if isinstance(obj, dict):
-        obj[key] = value
-        return
-    try:
-        setattr(obj, key, value)
-    except Exception:
-        pass
-
-
-def _v85_to_text(value):
-    if value is None:
-        return ''
-    if isinstance(value, str):
-        return value
-    if isinstance(value, dict):
-        parts = []
-        for key in ('message', 'response', 'content', 'summary', 'text', 'title', 'command'):
-            if value.get(key):
-                parts.append(str(value.get(key)))
-        if value.get('proposal'):
-            parts.append(_v85_to_text(value.get('proposal')))
-        if value.get('draft'):
-            parts.append(_v85_to_text(value.get('draft')))
-        return ' '.join(parts)
-    parts = []
-    for key in ('message', 'response', 'content', 'summary', 'text', 'title', 'command'):
-        val = getattr(value, key, None)
-        if val:
-            parts.append(str(val))
-    for key in ('proposal', 'draft'):
-        val = getattr(value, key, None)
-        if val:
-            parts.append(_v85_to_text(val))
-    return ' '.join(parts) or str(value)
-
-
-def _v85_command_name(obj):
-    cmd = _v85_get(obj, 'command', '') or _v85_get(obj, 'intent', '') or _v85_get(obj, 'type', '')
-    return str(cmd or '').strip().lower()
-
-
-def _v85_args(obj):
-    return _v85_get(obj, 'args', None) or _v85_get(obj, 'arguments', None) or {}
-
-
-def _v85_is_readonly_summary_like(obj):
-    if obj is None:
-        return False
-    cmd = _v85_command_name(obj)
-    if cmd:
-        if cmd in _V85_READONLY_COMMAND_KEYWORDS:
-            return True
-        if any(k in cmd for k in ('summary', 'progress', 'status')):
-            return True
-    args = _v85_args(obj)
-    if isinstance(args, dict):
-        for key in ('intent', 'type', 'command', 'mode'):
-            val = str(args.get(key, '') or '').lower()
-            if val in _V85_READONLY_COMMAND_KEYWORDS or any(k in val for k in ('summary', 'progress', 'status')):
-                return True
-    text = _v85_to_text(obj).lower()
-    if any(marker in text for marker in _V85_READONLY_TEXT_MARKERS):
-        # Avoid incorrectly marking mutation commands that happen to mention status/progress.
-        mutation_words = ('add intern', 'extend intern', 'create plan', 'edit task', 'update task', 'add holiday', 'finalize evaluation')
-        return not any(w in text for w in mutation_words)
-    return False
-
-
-def _v85_find_draft_or_proposal(response):
-    for key in ('draft', 'proposal', 'pending', 'command_draft'):
-        val = _v85_get(response, key, None)
-        if val is not None:
-            return val
-    # Some response shapes put draft under data.
-    data = _v85_get(response, 'data', None)
-    if isinstance(data, dict):
-        for key in ('draft', 'proposal', 'pending', 'command_draft'):
-            if data.get(key) is not None:
-                return data.get(key)
-    return response if _v85_is_readonly_summary_like(response) else None
-
-
-def _v85_success(result):
-    if result is None:
-        return False
-    if isinstance(result, dict):
-        return bool(result.get('ok', result.get('success', True)))
-    for key in ('ok', 'success'):
-        if hasattr(result, key):
-            return bool(getattr(result, key))
-    return True
-
-
-def _v85_result_message(result):
-    if result is None:
-        return ''
-    if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
-        for key in ('summary', 'message', 'response', 'content', 'text', 'output'):
-            val = result.get(key)
-            if val:
-                return str(val)
-        return str(result)
-    for key in ('summary', 'message', 'response', 'content', 'text', 'output'):
-        val = getattr(result, key, None)
-        if val:
-            return str(val)
-    return str(result)
-
-
-def _v85_try_execute_readonly(self, draft):
-    # Prevent recursion if an approval hook eventually calls back into response generation.
-    if getattr(self, '_v85_executing_readonly', False):
-        return None
-    self._v85_executing_readonly = True
-    try:
-        cmd = _v85_command_name(draft)
-        args = _v85_args(draft)
-
-        # Prefer "approve/apply" hooks because the old app already knew how to generate the summary after user typed approve.
-        method_candidates = (
-            'approve', 'approve_draft', '_approve_draft', 'apply_draft', '_apply_draft',
-            'execute_draft', '_execute_draft', 'run_draft', '_run_draft',
-            'execute_command', '_execute_command', 'run_command', '_run_command',
-            'execute', 'run', 'apply',
-        )
-        for name in method_candidates:
-            method = getattr(self, name, None)
-            if callable(method):
-                try:
-                    try:
-                        result = method(draft)
-                    except TypeError:
-                        result = method(cmd, args)
-                    if result is not None:
-                        return result
-                except Exception:
-                    continue
-
-        # Try executor attributes.
-        for attr in ('executor', 'command_executor', '_executor', '_command_executor'):
-            executor = getattr(self, attr, None)
-            if executor is None:
-                continue
-            for name in ('approve', 'apply', 'execute', 'run'):
-                method = getattr(executor, name, None)
-                if callable(method):
-                    try:
-                        try:
-                            result = method(draft)
-                        except TypeError:
-                            result = method(cmd, args)
-                        if result is not None:
-                            return result
-                    except Exception:
-                        continue
-
-        # Try project command executor.
-        try:
-            from tracker_commands.executor import CommandExecutor
-            executor = CommandExecutor()
-            for name in ('approve', 'apply', 'execute', 'run'):
-                method = getattr(executor, name, None)
-                if callable(method):
-                    try:
-                        try:
-                            result = method(draft)
-                        except TypeError:
-                            result = method(cmd, args)
-                        if result is not None:
-                            return result
-                    except Exception:
-                        continue
-        except Exception:
-            pass
-    finally:
-        self._v85_executing_readonly = False
-    return None
-
-
-def _v85_clean_readonly_response(result, fallback='Generated progress summary.'):
-    message = _v85_result_message(result).strip() or fallback
-    if 'Review the proposal on the right' in message:
-        message = message.split('Review the proposal on the right')[0].strip() or fallback
-    response = {
-        'ok': True,
-        'success': True,
-        'readonly': True,
-        'requires_approval': False,
-        'needs_approval': False,
-        'approval_required': False,
-        'message': message,
-        'response': message,
-        'content': message,
-        'proposal': None,
-        'draft': None,
-        'command': 'summary',
-    }
-    if isinstance(result, dict):
-        # Keep useful data fields, but override approval fields.
-        response.update({k: v for k, v in result.items() if k not in {'proposal', 'draft', 'requires_approval', 'needs_approval', 'approval_required'}})
-        response.update({'readonly': True, 'requires_approval': False, 'needs_approval': False, 'approval_required': False, 'proposal': None, 'draft': None})
-        if message:
-            response['message'] = message
-            response['response'] = message
-            response['content'] = message
-    return response
-
-
-def _v85_mutate_to_no_proposal(response):
-    if isinstance(response, dict):
-        response['readonly'] = True
-        response['requires_approval'] = False
-        response['needs_approval'] = False
-        response['approval_required'] = False
-        response['proposal'] = None
-        response['draft'] = None
-        msg = str(response.get('message') or response.get('response') or response.get('content') or '')
-        if 'Review the proposal on the right' in msg or 'approve, edit, or cancel' in msg.lower():
-            msg = msg.split('Review the proposal on the right')[0].strip() or 'Generated progress summary.'
-            response['message'] = msg
-            response['response'] = msg
-            response['content'] = msg
-        return response
-    for key, value in (
-        ('readonly', True), ('requires_approval', False), ('needs_approval', False),
-        ('approval_required', False), ('proposal', None), ('draft', None),
-    ):
-        try:
-            setattr(response, key, value)
-        except Exception:
-            pass
-    return response
-
-
-# Wrap _response_for_draft if available.
-if hasattr(ChatService, '_response_for_draft') and not hasattr(ChatService, '_base_response_for_draft_v85'):
-    ChatService._base_response_for_draft_v85 = ChatService._response_for_draft
-
-    def _v85_response_for_draft(self, draft):
-        if _v85_is_readonly_summary_like(draft):
-            result = _v85_try_execute_readonly(self, draft)
-            if result is not None and _v85_success(result):
-                return _v85_clean_readonly_response(result)
-            base = ChatService._base_response_for_draft_v85(self, draft)
-            if _v85_is_readonly_summary_like(base):
-                draft2 = _v85_find_draft_or_proposal(base)
-                result2 = _v85_try_execute_readonly(self, draft2)
-                if result2 is not None and _v85_success(result2):
-                    return _v85_clean_readonly_response(result2)
-                return _v85_mutate_to_no_proposal(base)
-            return base
-        return ChatService._base_response_for_draft_v85(self, draft)
-
-    ChatService._response_for_draft = _v85_response_for_draft
-
-
-# Also wrap common chat/message methods because some versions create proposal responses without _response_for_draft.
-def _v85_wrap_method(method_name):
-    if not hasattr(ChatService, method_name):
-        return
-    marker = f'_base_{method_name}_v85'
-    if hasattr(ChatService, marker):
-        return
-    base = getattr(ChatService, method_name)
-    if not callable(base):
-        return
-    setattr(ChatService, marker, base)
-
-    def wrapped(self, *args, **kwargs):
-        response = base(self, *args, **kwargs)
-        if _v85_is_readonly_summary_like(response):
-            draft = _v85_find_draft_or_proposal(response)
-            result = _v85_try_execute_readonly(self, draft)
-            if result is not None and _v85_success(result):
-                return _v85_clean_readonly_response(result)
-            return _v85_mutate_to_no_proposal(response)
-        return response
-
-    setattr(ChatService, method_name, wrapped)
-
-for _v85_name in ('chat', 'ask', 'handle', 'process', 'message', 'send', 'respond', 'reply', 'run'):
-    _v85_wrap_method(_v85_name)
 
 
 # ===== v100 create-plan LLM shape + sanitize override =====
