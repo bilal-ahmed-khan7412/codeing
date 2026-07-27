@@ -10,7 +10,6 @@ import shutil
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 
 from tracker_commands.executor import CommandExecutor
 from tracker_commands.validator import CommandValidationError
@@ -20,6 +19,7 @@ from tracker_audit.audit_service import AuditService
 from tracker_tasks.task_service import TaskService
 from tracker_audit.audit_db import init_db
 from tracker_chat.chat_service import ChatService
+from tracker_auth.jwt_service import create_session_token, decode_session_token, SESSION_TTL_SECONDS
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -28,7 +28,6 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Intern Tracker Web UI", version="0.10")
-app.mount("/web", StaticFiles(directory=str(BASE_DIR / "web")), name="web")
 executor = CommandExecutor()
 chat_service = ChatService()
 init_db()
@@ -72,14 +71,14 @@ def chat_page():
 
 
 def current_user_from_request(request: Request):
-    email = request.cookies.get('user_email')
-    if not email:
+    token = request.cookies.get('session_token')
+    claims = decode_session_token(token)
+    if not claims:
         return None
-    users = user_service.list_users()
-    for u in users:
-        if u.get('email','').lower() == email.lower() and u.get('status') == 'Active':
-            return u
-    return None
+    user = user_service.get_user_by_id(int(claims['sub']))
+    if not user or user.get('status') != 'Active':
+        return None
+    return user
 
 
 def require_login(request: Request):
@@ -87,6 +86,15 @@ def require_login(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail='Login required')
     return user
+
+
+def redirect_by_role(user):
+    role = (user or {}).get('role', '')
+    if role == 'Super Admin':
+        return RedirectResponse('/dashboard/super-admin')
+    if role == 'Admin':
+        return RedirectResponse('/dashboard/admin')
+    return RedirectResponse('/dashboard/user')
 
 
 
@@ -108,8 +116,10 @@ def api_login(payload: dict):
         audit_service.log({'name':'Unknown','email':payload.get('email','')}, interface='Auth', action='Login Failed', status='Failed', summary='Invalid login or inactive user')
         return JSONResponse(status_code=401, content={'ok': False, 'error': 'Invalid login or inactive user'})
     audit_service.log(user, interface='Auth', action='Login', status='Success', summary='User logged in')
-    res = JSONResponse({'ok': True, 'user': user})
-    res.set_cookie('user_email', user['email'], httponly=False, samesite='lax')
+    token = create_session_token(user)
+    public_user = {k: v for k, v in user.items() if k != 'password'}
+    res = JSONResponse({'ok': True, 'user': public_user})
+    res.set_cookie('session_token', token, httponly=True, samesite='lax', max_age=SESSION_TTL_SECONDS)
     return res
 
 @app.get('/logout')
@@ -119,7 +129,7 @@ def logout(request: Request):
         user_service.logout(user['email'])
         audit_service.log(user, interface='Auth', action='Logout', status='Success', summary='User logged out')
     res = RedirectResponse('/login')
-    res.delete_cookie('user_email')
+    res.delete_cookie('session_token')
     return res
 
 @app.get('/api/me')
@@ -215,9 +225,42 @@ def api_create_task(request: Request, payload: dict):
     audit_service.log(user, interface='Tasks', action='Create Task', target_type='Task', target_name=payload.get('title',''), status='Success')
     return {'ok': True}
 
-@app.get("/", response_class=HTMLResponse)
-def home():
-    return (BASE_DIR / "web" / "index.html").read_text(encoding="utf-8")
+@app.get("/")
+def home(request: Request):
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse('/login')
+    return redirect_by_role(user)
+
+
+@app.get('/dashboard/super-admin', response_class=HTMLResponse)
+def super_admin_dashboard(request: Request):
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse('/login')
+    if user.get('role') != 'Super Admin':
+        return redirect_by_role(user)
+    return (BASE_DIR / 'web' / 'super_admin_home.html').read_text(encoding='utf-8')
+
+
+@app.get('/dashboard/admin', response_class=HTMLResponse)
+def admin_dashboard(request: Request):
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse('/login')
+    if user.get('role') != 'Admin':
+        return redirect_by_role(user)
+    return (BASE_DIR / 'web' / 'admin_home.html').read_text(encoding='utf-8')
+
+
+@app.get('/dashboard/user', response_class=HTMLResponse)
+def user_dashboard(request: Request):
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse('/login')
+    if user.get('role') != 'User':
+        return redirect_by_role(user)
+    return (BASE_DIR / 'web' / 'user_home.html').read_text(encoding='utf-8')
 
 
 @app.post("/api/upload")
@@ -432,11 +475,11 @@ def api_update_profile(request: Request, payload: dict):
     actor = require_login(request)
     old_email = actor.get('email')
     user_service.update_profile(old_email, payload)
-    new_email = payload.get('email') or old_email
     audit_service.log(actor, interface='Profile', action='Update Profile', status='Success', summary='User updated own profile')
+    updated = user_service.get_user_by_id(actor['id'])
     res = JSONResponse({'ok': True})
-    if new_email != old_email:
-        res.set_cookie('user_email', new_email, httponly=False, samesite='lax')
+    if updated:
+        res.set_cookie('session_token', create_session_token(updated), httponly=True, samesite='lax', max_age=SESSION_TTL_SECONDS)
     return res
 
 
