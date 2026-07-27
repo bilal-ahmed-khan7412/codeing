@@ -4,6 +4,7 @@ from tracker_core.models import CommandResult
 from tracker_excel.renderer.parser import parse_workbook, PlanSheetData, InternSheetData
 from tracker_services.render_service import RenderService
 from tracker_services.version_service import VersionService
+from tracker_chat.intern_sheet_drafter import InternSheetDrafter
 
 class PlanService:
 
@@ -174,7 +175,7 @@ class PlanService:
         end = intern.main_row[4] if len(intern.main_row) > 4 else None
         if not isinstance(start, datetime) or not isinstance(end, datetime):
             return CommandResult(False, 'Intern start/end dates are missing or invalid')
-        tasks, weekly_reports, projects = self._build_schedule_from_preview(schedule_preview, start, end) if schedule_preview else self._build_schedule_from_plan(plan, start, end)
+        tasks, weekly_reports, projects = self._build_schedule_from_plan(plan, start, end)
         intern.tasks = tasks
         intern.weekly_reports = weekly_reports
         intern.projects = projects
@@ -386,175 +387,129 @@ class PlanService:
         sheet = ''.join('_' if ch in bad else ch for ch in name)[:31]
         return sheet or 'Plan'
 
+    def extend_intern_with_plan(self, source_path: str, intern_name: str, new_end: str, plan_name: str, output_path: str | None = None, update_main_project: bool = True):
+        """Extend an intern's end date, drafting the extension period's content from a selected plan."""
+        intern_name = (intern_name or '').strip()
+        plan_name = (plan_name or '').strip()
+        if not intern_name or not new_end or not plan_name:
+            return CommandResult(False, 'intern, new_end, and plan_name are required')
 
-# v0.54 extend_intern_with_plan method
-# Adds plan-aware extension without removing the old simple Extend Intern command.
-def _v54_extend_intern_with_plan(self, source_path: str, intern_name: str, new_end: str, plan_name: str, output_path: str | None = None, update_main_project: bool = True):
-    from datetime import datetime, timedelta
-    from tracker_excel.renderer.parser import parse_workbook
-    from tracker_chat.intern_sheet_drafter import InternSheetDrafter
+        data = parse_workbook(source_path)
+        intern = None
+        for item in data.interns:
+            if item.name.strip().lower() == intern_name.lower():
+                intern = item
+                break
+        if not intern:
+            return CommandResult(False, f'Intern not found: {intern_name}')
 
-    # v0.59 robust dynamic service lookup.
-    # The project has changed renderer module paths across versions, so do not
-    # hardcode tracker_excel.renderer.render_service or tracker_excel.renderer.
-    import importlib
-    import pkgutil
-
-    def _find_class_in_package(package_name: str, class_name: str):
+        current_end = intern.main_row[4] if len(intern.main_row) > 4 else None
+        if not isinstance(current_end, datetime):
+            return CommandResult(False, 'Intern current end date is missing or invalid')
         try:
-            package = importlib.import_module(package_name)
+            new_end_dt = datetime.fromisoformat(str(new_end))
         except Exception:
-            return None
-        if hasattr(package, class_name):
-            return getattr(package, class_name)
-        package_path = getattr(package, '__path__', None)
-        if not package_path:
-            return None
-        for mod in pkgutil.iter_modules(package_path, package.__name__ + '.'):
+            return CommandResult(False, 'new_end must be a valid ISO date, e.g. 2026-09-30')
+        if new_end_dt.date() <= current_end.date():
+            return CommandResult(False, 'new_end must be after the intern current end date')
+
+        extension_start = current_end + timedelta(days=1)
+        while extension_start.weekday() >= 5:
+            extension_start += timedelta(days=1)
+
+        # Draft only the extension period. The drafter uses the selected plan as context.
+        drafter = InternSheetDrafter()
+        draft = drafter.draft(source_path, intern_name, extension_start.strftime('%Y-%m-%d'), new_end_dt.strftime('%Y-%m-%d'), plan_name)
+        weeks = draft.get('weeks') or []
+        main = draft.get('main_project') or {}
+        scenario = draft.get('scenario') or {}
+
+        # Existing week/project numbering continuity.
+        existing_weeks = []
+        for row in getattr(intern, 'tasks', []) or []:
             try:
-                module = importlib.import_module(mod.name)
+                existing_weeks.append(int(row[1]))
             except Exception:
+                pass
+        week_offset = max(existing_weeks) if existing_weeks else 0
+        project_offset = len(getattr(intern, 'projects', []) or [])
+
+        # Build extension schedule from weekly preview with progressive daily tasks.
+        preview_map = {}
+        for idx, w in enumerate(weeks, start=1):
+            if not isinstance(w, dict):
                 continue
-            if hasattr(module, class_name):
-                return getattr(module, class_name)
-        return None
+            local_week = int(w.get('week') or idx)
+            daily_tasks = w.get('daily_tasks') if isinstance(w.get('daily_tasks'), list) else []
+            if not daily_tasks:
+                daily_tasks = [w.get('daily_task') or w.get('task') or 'Complete extension task for this week.']
+            preview_map[local_week] = {
+                'theme': str(w.get('theme') or f'Extension Week {local_week}'),
+                'daily_tasks': [str(x) for x in daily_tasks if str(x).strip()],
+                'project': str(w.get('weekly_project') or f'Extension Week {local_week} Project'),
+                'notes': str(w.get('notes') or ''),
+            }
 
-    render_service_cls = globals().get('RenderService') or _find_class_in_package('tracker_excel.renderer', 'RenderService')
-    version_service_cls = globals().get('VersionService')
-    if version_service_cls is None:
-        try:
-            version_mod = importlib.import_module('tracker_services.version_service')
-            version_service_cls = getattr(version_mod, 'VersionService')
-        except Exception:
-            version_service_cls = None
-    if render_service_cls is None:
-        return CommandResult(False, 'RenderService could not be located in tracker_excel.renderer package')
-    if version_service_cls is None:
-        return CommandResult(False, 'VersionService could not be located')
+        current = extension_start
+        workday_count = 0
+        week_dates = {}
+        week_day_index = {}
+        new_tasks = []
+        while current.date() <= new_end_dt.date():
+            if current.weekday() < 5:
+                workday_count += 1
+                local_week = ((workday_count - 1) // 5) + 1
+                actual_week = week_offset + local_week
+                item = preview_map.get(local_week, {
+                    'theme': f'{plan_name} Extension Week {local_week}',
+                    'daily_tasks': [f'Complete {plan_name} extension task.'],
+                    'project': f'{plan_name} Extension Project {local_week}',
+                    'notes': ''
+                })
+                week_dates.setdefault(local_week, []).append(current)
+                day_idx = week_day_index.get(local_week, 0)
+                daily_list = item.get('daily_tasks') or [f'Complete {plan_name} extension task.']
+                task_text = daily_list[day_idx] if day_idx < len(daily_list) else daily_list[-1]
+                week_day_index[local_week] = day_idx + 1
+                new_tasks.append([current, actual_week, item['theme'], task_text, 'Pending', ''])
+            current += timedelta(days=1)
 
-    intern_name = (intern_name or '').strip()
-    plan_name = (plan_name or '').strip()
-    if not intern_name or not new_end or not plan_name:
-        return CommandResult(False, 'intern, new_end, and plan_name are required')
-
-    data = parse_workbook(source_path)
-    intern = None
-    for item in data.interns:
-        if item.name.strip().lower() == intern_name.lower():
-            intern = item
-            break
-    if not intern:
-        return CommandResult(False, f'Intern not found: {intern_name}')
-
-    current_end = intern.main_row[4] if len(intern.main_row) > 4 else None
-    if not isinstance(current_end, datetime):
-        return CommandResult(False, 'Intern current end date is missing or invalid')
-    try:
-        new_end_dt = datetime.fromisoformat(str(new_end))
-    except Exception:
-        return CommandResult(False, 'new_end must be a valid ISO date, e.g. 2026-09-30')
-    if new_end_dt.date() <= current_end.date():
-        return CommandResult(False, 'new_end must be after the intern current end date')
-
-    extension_start = current_end + timedelta(days=1)
-    while extension_start.weekday() >= 5:
-        extension_start += timedelta(days=1)
-
-    # Draft only the extension period. The drafter uses the selected plan as context.
-    drafter = InternSheetDrafter()
-    draft = drafter.draft(source_path, intern_name, extension_start.strftime('%Y-%m-%d'), new_end_dt.strftime('%Y-%m-%d'), plan_name)
-    weeks = draft.get('weeks') or []
-    main = draft.get('main_project') or {}
-    scenario = draft.get('scenario') or {}
-
-    # Existing week/project numbering continuity.
-    existing_weeks = []
-    for row in getattr(intern, 'tasks', []) or []:
-        try:
-            existing_weeks.append(int(row[1]))
-        except Exception:
-            pass
-    week_offset = max(existing_weeks) if existing_weeks else 0
-    project_offset = len(getattr(intern, 'projects', []) or [])
-
-    # Build extension schedule from weekly preview with progressive daily tasks.
-    preview_map = {}
-    for idx, w in enumerate(weeks, start=1):
-        if not isinstance(w, dict):
-            continue
-        local_week = int(w.get('week') or idx)
-        daily_tasks = w.get('daily_tasks') if isinstance(w.get('daily_tasks'), list) else []
-        if not daily_tasks:
-            daily_tasks = [w.get('daily_task') or w.get('task') or 'Complete extension task for this week.']
-        preview_map[local_week] = {
-            'theme': str(w.get('theme') or f'Extension Week {local_week}'),
-            'daily_tasks': [str(x) for x in daily_tasks if str(x).strip()],
-            'project': str(w.get('weekly_project') or f'Extension Week {local_week} Project'),
-            'notes': str(w.get('notes') or ''),
-        }
-
-    current = extension_start
-    workday_count = 0
-    week_dates = {}
-    week_day_index = {}
-    new_tasks = []
-    while current.date() <= new_end_dt.date():
-        if current.weekday() < 5:
-            workday_count += 1
-            local_week = ((workday_count - 1) // 5) + 1
+        new_weekly = []
+        new_projects = []
+        for local_week, dates in sorted(week_dates.items()):
             actual_week = week_offset + local_week
-            item = preview_map.get(local_week, {
-                'theme': f'{plan_name} Extension Week {local_week}',
-                'daily_tasks': [f'Complete {plan_name} extension task.'],
-                'project': f'{plan_name} Extension Project {local_week}',
-                'notes': ''
-            })
-            week_dates.setdefault(local_week, []).append(current)
-            day_idx = week_day_index.get(local_week, 0)
-            daily_list = item.get('daily_tasks') or [f'Complete {plan_name} extension task.']
-            task_text = daily_list[day_idx] if day_idx < len(daily_list) else daily_list[-1]
-            week_day_index[local_week] = day_idx + 1
-            new_tasks.append([current, actual_week, item['theme'], task_text, 'Pending', ''])
-        current += timedelta(days=1)
+            item = preview_map.get(local_week, {'theme': f'{plan_name} Extension Week {local_week}', 'project': f'{plan_name} Extension Project {local_week}', 'notes': ''})
+            new_weekly.append([actual_week, item['theme'], '', '', '', '', 'No', 'No'])
+            new_projects.append([project_offset + local_week, item['project'], item.get('notes') or 'Extension deliverable', dates[0], dates[-1], 'Pending'])
 
-    new_weekly = []
-    new_projects = []
-    for local_week, dates in sorted(week_dates.items()):
-        actual_week = week_offset + local_week
-        item = preview_map.get(local_week, {'theme': f'{plan_name} Extension Week {local_week}', 'project': f'{plan_name} Extension Project {local_week}', 'notes': ''})
-        new_weekly.append([actual_week, item['theme'], '', '', '', '', 'No', 'No'])
-        new_projects.append([project_offset + local_week, item['project'], item.get('notes') or 'Extension deliverable', dates[0], dates[-1], 'Pending'])
+        intern.tasks.extend(new_tasks)
+        intern.weekly_reports.extend(new_weekly)
+        intern.projects.extend(new_projects)
 
-    intern.tasks.extend(new_tasks)
-    intern.weekly_reports.extend(new_weekly)
-    intern.projects.extend(new_projects)
+        # Update dates and optionally refocus project/scenario to the extension plan.
+        while len(intern.main_row) < 6:
+            intern.main_row.append('')
+        intern.main_row[4] = new_end_dt
+        if update_main_project and main:
+            intern.main_row[0] = main.get('title') or intern.main_row[0]
+            intern.main_row[1] = main.get('objective') or intern.main_row[1]
+            intern.main_row[2] = main.get('tech_stack') or intern.main_row[2]
 
-    # Update dates and optionally refocus project/scenario to the extension plan.
-    while len(intern.main_row) < 6:
-        intern.main_row.append('')
-    intern.main_row[4] = new_end_dt
-    if update_main_project and main:
-        intern.main_row[0] = main.get('title') or intern.main_row[0]
-        intern.main_row[1] = main.get('objective') or intern.main_row[1]
-        intern.main_row[2] = main.get('tech_stack') or intern.main_row[2]
+        while len(intern.scenario_row) < 6:
+            intern.scenario_row.append('')
+        if scenario:
+            intern.scenario_row[0] = scenario.get('scenario') or intern.scenario_row[0]
+            intern.scenario_row[1] = scenario.get('skills') or intern.scenario_row[1]
+            intern.scenario_row[2] = scenario.get('deliverable') or intern.scenario_row[2]
+            intern.scenario_row[4] = new_end_dt
 
-    while len(intern.scenario_row) < 6:
-        intern.scenario_row.append('')
-    if scenario:
-        intern.scenario_row[0] = scenario.get('scenario') or intern.scenario_row[0]
-        intern.scenario_row[1] = scenario.get('skills') or intern.scenario_row[1]
-        intern.scenario_row[2] = scenario.get('deliverable') or intern.scenario_row[2]
-        intern.scenario_row[4] = new_end_dt
+        # Update subtitle/title.
+        if len(intern.main_row) > 0 and intern.main_row[0]:
+            final_project = intern.main_row[0]
+        else:
+            final_project = f'{plan_name} Extension Project'
+        intern.subtitle = f"Start: {intern.main_row[3].strftime('%a, %d %b %Y') if len(intern.main_row) > 3 and isinstance(intern.main_row[3], datetime) else ''}    |    End: {new_end_dt.strftime('%a, %d %b %Y')}    |    Final project: {final_project}"
 
-    # Update subtitle/title.
-    if len(intern.main_row) > 0 and intern.main_row[0]:
-        final_project = intern.main_row[0]
-    else:
-        final_project = f'{plan_name} Extension Project'
-    intern.subtitle = f"Start: {intern.main_row[3].strftime('%a, %d %b %Y') if len(intern.main_row) > 3 and isinstance(intern.main_row[3], datetime) else ''}    |    End: {new_end_dt.strftime('%a, %d %b %Y')}    |    Final project: {final_project}"
-
-    out = output_path or version_service_cls.next_version_path(source_path)
-    render_service_cls.render_data(data, out)
-    return CommandResult(True, f'Extended {intern_name} to {new_end_dt.strftime("%Y-%m-%d")} with {plan_name}: {out}', out)
-
-PlanService.extend_intern_with_plan = _v54_extend_intern_with_plan
+        out = output_path or VersionService.next_version_path(source_path)
+        RenderService.render_data(data, out)
+        return CommandResult(True, f'Extended {intern_name} to {new_end_dt.strftime("%Y-%m-%d")} with {plan_name}: {out}', out)
