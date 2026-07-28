@@ -149,9 +149,22 @@ class ChatService:
         # provider is configured or the LLM parse doesn't match the active command.
         parsed = self.intent_parser.parse(text, active_command=draft.command)
         if parsed and parsed.get('command') == draft.command:
+            # A small LLM answering a narrow "fill these missing fields"
+            # prompt can echo a placeholder/example token back as if it
+            # were real data (e.g. its own few-shot example name, or a
+            # "__foo__" sentinel meant for internal routing only). Only
+            # accept a field the user was actually asked to supply, and
+            # never let a guess clobber a value already known to be
+            # correct.
+            still_missing = {k for k in REQUIRED.get(draft.command, []) if not draft.args.get(k)}
             for k, v in (parsed.get('args') or {}).items():
-                if v not in [None, '', []]:
-                    draft.args[k] = v
+                if v in [None, '', []]:
+                    continue
+                if isinstance(v, str) and re.fullmatch(r'__[a-z_]+__', v):
+                    continue
+                if k not in still_missing:
+                    continue
+                draft.args[k] = v
             self._force_enrich_ready_add_intern_with_plan(draft)
             return self._response_for_draft(draft)
 
