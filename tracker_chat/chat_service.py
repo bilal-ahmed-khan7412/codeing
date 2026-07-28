@@ -66,6 +66,12 @@ REQUIRED = {
     'apply_plan_to_intern': ['source', 'intern', 'plan_name', 'output'],
 }
 
+# Fields whose value is a semantic classification of the user's words
+# (e.g. "mark it done" -> "Completed"), not a literal extraction. These
+# are exempt from the groundedness check below, since a correct value
+# legitimately never appears verbatim in the input text.
+_ENUM_FIELDS = {'status'}
+
 @dataclass
 class ChatDraft:
     draft_id: str
@@ -144,6 +150,17 @@ class ChatService:
         draft = self.drafts.get(draft_id)
         if not draft:
             return {'ok': False, 'error': 'Draft not found'}
+
+        # "Extend X with a plan?" is asked as a plain missing-field question
+        # (see _extend_intern_draft). Handle an explicit opt-out before any
+        # LLM/regex parsing, since a phrase like "no plan" would otherwise
+        # get fed to the LLM as if it were a plan name.
+        if draft.command == 'extend_intern_with_plan' and not draft.args.get('plan_name') and self._wants_no_plan(text):
+            draft.command = 'extend_intern'
+            draft.args.pop('plan_name', None)
+            draft.args.pop('extension_preview', None)
+            return self._response_for_draft(draft)
+
         # Try LLM field extraction for the active draft first. This avoids brittle
         # issues such as lowercase names. Regex below remains fallback when no LLM
         # provider is configured or the LLM parse doesn't match the active command.
@@ -151,11 +168,15 @@ class ChatService:
         if parsed and parsed.get('command') == draft.command:
             # A small LLM answering a narrow "fill these missing fields"
             # prompt can echo a placeholder/example token back as if it
-            # were real data (e.g. its own few-shot example name, or a
-            # "__foo__" sentinel meant for internal routing only). Only
-            # accept a field the user was actually asked to supply, and
-            # never let a guess clobber a value already known to be
-            # correct.
+            # were real data (e.g. its own few-shot example name, a
+            # "__foo__" sentinel meant for internal routing only, or a
+            # plausible-looking but entirely invented name/date). Only
+            # accept a field the user was actually asked to supply, reject
+            # any "__foo__"-shaped placeholder outright, and - since a
+            # genuine answer should always be traceable back to the user's
+            # own words - require the value to actually appear in what they
+            # typed. That last check is skipped for fields whose value is a
+            # semantic classification rather than a literal extraction.
             still_missing = {k for k in REQUIRED.get(draft.command, []) if not draft.args.get(k)}
             for k, v in (parsed.get('args') or {}).items():
                 if v in [None, '', []]:
@@ -163,6 +184,8 @@ class ChatService:
                 if isinstance(v, str) and re.fullmatch(r'__[a-z_]+__', v):
                     continue
                 if k not in still_missing:
+                    continue
+                if k not in _ENUM_FIELDS and isinstance(v, str) and not self._is_grounded(v, text):
                     continue
                 draft.args[k] = v
             self._force_enrich_ready_add_intern_with_plan(draft)
@@ -200,10 +223,22 @@ class ChatService:
             if dates: args['date'] = dates[0]
             hm = re.search(r'(?:holiday name is|holiday is|holiday called|holiday)\s+([A-Za-z0-9 ._-]+)', text, re.I)
             if hm: args['name'] = hm.group(1).strip()
-        elif draft.command in ['extend_intern','edit_task','update_task_status','update_capstone','update_scenario','edit_project','update_project_status']:
+        elif draft.command in ['extend_intern','extend_intern_with_plan','edit_task','update_task_status','update_capstone','update_scenario','edit_project','update_project_status']:
             m = re.search(r'(?:intern name is|intern is|intern|for)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
             if m: args['intern'] = m.group(1).strip()
-            if draft.command == 'extend_intern' and dates: args['new_end'] = dates[-1]
+            if draft.command in ['extend_intern', 'extend_intern_with_plan'] and dates: args['new_end'] = dates[-1]
+            if draft.command == 'extend_intern_with_plan' and not args.get('plan_name'):
+                pm = re.search(r'(?:plan name is|plan is|with|use|apply)\s+([A-Za-z0-9 ._+-]+)', text, re.I)
+                if pm:
+                    val = pm.group(1).strip().rstrip('.')
+                    if val: args['plan_name'] = val
+                elif not dates and not re.search(r'\bintern\b', lower):
+                    # Nothing else recognized in this reply - treat it as
+                    # the plan name itself (e.g. user just types "SecOps
+                    # Foundation" when that's the only thing being asked).
+                    candidate = text.strip().rstrip('.')
+                    if candidate:
+                        args['plan_name'] = candidate
             if draft.command in ['edit_task','update_task_status'] and dates: args['task_ref'] = dates[0]
             if 'completed' in lower: args['status'] = 'Completed'
             elif 'in progress' in lower: args['status'] = 'In Progress'
@@ -474,7 +509,18 @@ class ChatService:
         command = parsed.get('command')
         if command == '__plan_draft__':
             return self._draft_plan_with_llm(text, current_workbook)
-        args = parsed.get('args') or {}
+        raw_args = parsed.get('args') or {}
+        # Same grounding requirement as fill_from_text: given a message
+        # with too little information, a small model can invent a
+        # plausible-looking value (observed live: "add intern from
+        # 2026-08-09 to 2026-09-01 ..." with no name in it at all still
+        # came back with name="Shakeel", its own few-shot example name)
+        # rather than just leaving the field for the user to be asked
+        # about. Drop anything not actually traceable to the user's words.
+        args = {
+            k: v for k, v in raw_args.items()
+            if k in _ENUM_FIELDS or not isinstance(v, str) or self._is_grounded(v, text)
+        }
         # Inject current workbook defaults. The LLM must not invent source/output paths.
         if current_workbook:
             if command == 'summary':
@@ -895,6 +941,19 @@ class ChatService:
         if weeks:
             args['schedule_preview'] = weeks
 
+    def _is_grounded(self, value, text: str) -> bool:
+        """True if value plausibly came from the user's own words."""
+        v = str(value).strip().lower()
+        if not v:
+            return False
+        return v in (text or '').lower()
+
+    def _wants_no_plan(self, text: str) -> bool:
+        lower = (text or '').strip().lower()
+        if lower in {'no', 'none', 'no plan', 'skip', 'no thanks'}:
+            return True
+        return any(p in lower for p in ['no plan', 'without a plan', 'without plan', 'skip plan', 'just placeholder', 'placeholder only'])
+
     def _clean_name(self, value: str) -> str:
         value = (value or '').strip().strip(' .,:;')
         value = re.sub(r'^(of|for|intern|the intern)\s+', '', value, flags=re.I).strip()
@@ -962,10 +1021,28 @@ class ChatService:
         m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
         if not m:
             m = re.search(r'(?:change|update|set)\s+(?:intern\s+)?(.+?)\s+(?:end date|new end)\s+(?:to|as)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
+        if not m:
+            # No date in this message at all (e.g. "extend intern Asad") -
+            # still capture the name so the user isn't asked to repeat it.
+            m = re.search(r'extend\s+(?:intern\s+)?([A-Za-z][\w.\'-]*(?:\s+[A-Za-z][\w.\'-]*){0,3})\s*$', text, re.I)
         if m:
-            args['intern'] = self._clean_name(m.group(1))
-        args.setdefault('output', self._stamped_output('extend_intern'))
-        return ChatDraft(str(uuid.uuid4()), 'extend_intern', args)
+            candidate = self._clean_name(m.group(1))
+            # "extend intern" alone (no name after it) leaves the optional
+            # "intern " prefix in the fallback pattern above with nothing
+            # to consume, so the capture group grabs the bare word "intern"
+            # itself - guard against treating that as a real name.
+            if candidate.strip().lower() not in {'intern', 'the intern', 'an intern', 'a intern'}:
+                args['intern'] = candidate
+
+        # A bare "extend" request doesn't say whether the new period should
+        # follow a specific plan. Default to asking (via the ordinary
+        # missing-field flow, since plan_name is required for this command)
+        # unless the user has already opted out of plan content.
+        if self._wants_no_plan(text):
+            args.setdefault('output', self._stamped_output('extend_intern'))
+            return ChatDraft(str(uuid.uuid4()), 'extend_intern', args)
+        args.setdefault('output', self._stamped_output('extend_intern_with_plan'))
+        return ChatDraft(str(uuid.uuid4()), 'extend_intern_with_plan', args)
 
     def _capstone_draft(self, text: str, current_workbook: str | None):
         lower = text.lower()
