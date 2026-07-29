@@ -15,5 +15,8 @@ services:
 
 volumes:
   app_data:
+    name: intern_ai_tracker_app_data
   app_uploads:
+    name: intern_ai_tracker_app_uploads
   app_outputs:
+    name: intern_ai_tracker_app_outputs
