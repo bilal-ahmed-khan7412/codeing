@@ -2,7 +2,7 @@
 
 A web application (with CLI companions) for managing intern learning plans and progress inside a structured Excel workbook — role-based access, a conversational chat assistant, an intern evaluation wizard, and full audit logging, all built on top of a command layer that keeps every mutation consistent and re-renderable.
 
-> Looking for the patch-by-patch version history instead? See [`CHANGELOG.md`](CHANGELOG.md).
+> This is the overview. For deep internal design, see [`ARCHITECTURE.md`](ARCHITECTURE.md). For step-by-step usage walkthroughs, see [`WORKFLOW.md`](WORKFLOW.md). For the patch-by-patch version history, see [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
