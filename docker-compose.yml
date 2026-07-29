@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    container_name: intern-ai-tracker
+    ports:
+      - "8005:8005"
+    env_file:
+      - .env
+    volumes:
+      - app_data:/app/data
+      - app_uploads:/app/uploads
+      - app_outputs:/app/outputs
+    restart: unless-stopped
+
+volumes:
+  app_data:
+  app_uploads:
+  app_outputs:
