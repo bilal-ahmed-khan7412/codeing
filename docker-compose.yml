@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    image: ai-track:latest
     container_name: intern-ai-tracker
     ports:
       - "9004:8005"
