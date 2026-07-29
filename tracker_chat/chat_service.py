@@ -530,8 +530,32 @@ class ChatService:
         self._defaults(command, args)
         if command == 'add_holiday':
             self._normalize_holiday_args_v49(text, args)
+        if command == 'add_intern_with_plan' and not args.get('plan_name'):
+            self._recover_plan_name(text, args)
         return ChatDraft(str(uuid.uuid4()), command, args)
 
+    def _recover_plan_name(self, text: str, args: dict):
+        """Deterministic backstop for plan_name on add_intern_with_plan.
+
+        Observed live: given "... with SecOps Foundation, main project
+        should be ..." (no trailing word "plan"), the LLM filed the plan
+        name under manager instead of plan_name, and the earlier regex
+        fallback only matched "with X plan" (required that trailing
+        word). This covers the bare "with X" phrasing directly, stopping
+        at the next clause boundary instead of requiring "plan" to
+        literally appear.
+        """
+        pm = re.search(r'\bwith\s+([A-Za-z0-9][\w .+-]*?)(?:\s*,|\s+main\b|\s+manager\b|\.|$)', text, re.I)
+        if not pm:
+            return
+        val = pm.group(1).strip().rstrip('.')
+        if not val or val.lower() == 'intern':
+            return
+        args['plan_name'] = val
+        # The LLM likely misfiled this same value under manager - drop it
+        # so it doesn't show up twice, once correctly and once wrong.
+        if str(args.get('manager', '')).strip().lower() == val.lower():
+            args.pop('manager', None)
 
     def _normalize_holiday_args_v49(self, text: str, args: dict):
         lower = (text or '').lower()
@@ -561,10 +585,20 @@ class ChatService:
         self._defaults(command, args)
         if command == 'add_holiday':
             self._normalize_holiday_args_v49(text, args)
+        if command == 'add_intern_with_plan' and not args.get('plan_name'):
+            self._recover_plan_name(text, args)
         return ChatDraft(str(uuid.uuid4()), command, args)
 
     def _detect_command(self, lower: str) -> str:
         if 'clean' in lower or 'render' in lower: return 'render_workbook'
+        # Checked early and before capstone/scenario/task/extend keywords:
+        # a message adding a brand-new intern often *describes* that
+        # intern's main project, scenario, or tasks in the same sentence
+        # (e.g. "add intern Sara ... main project should be building a
+        # SIEM dashboard"), which must not be misread as an edit to an
+        # existing intern that doesn't exist yet.
+        if 'json' in lower and 'intern' in lower: return 'add_intern'
+        if 'add intern' in lower or 'create intern' in lower or 'new intern' in lower: return 'add_intern_with_plan'
         if 'summary' in lower or 'progress' in lower or 'report' in lower: return 'summary'
         if 'holiday' in lower or 'holidat' in lower: return 'add_holiday'
         if 'extend' in lower: return 'extend_intern'
@@ -574,10 +608,6 @@ class ChatService:
         if 'scenario' in lower: return 'update_scenario'
         if 'project status' in lower: return 'update_project_status'
         if 'edit project' in lower or 'weekly project' in lower or 'small project' in lower: return 'edit_project'
-        if 'json' in lower and 'intern' in lower: return 'add_intern'
-        # User-facing intern creation should always be plan-based.
-        # If plan_name is missing, the draft asks for it instead of creating placeholders.
-        if 'add intern' in lower or 'create intern' in lower or 'new intern' in lower: return 'add_intern_with_plan'
         if 'apply plan' in lower or ('apply' in lower and 'plan' in lower): return 'apply_plan_to_intern'
         if 'edit plan week' in lower or ('week' in lower and 'plan' in lower and 'edit' in lower): return 'edit_plan_week'
         if 'edit plan' in lower or 'rename plan' in lower: return 'edit_plan'
@@ -1053,7 +1083,10 @@ class ChatService:
             args['source'] = current_workbook
 
         # update main project of Saleem to Agentic AI platform
-        m = re.search(r'(?:update|edit|change|set)\s+(?:main project|capstone)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
+        # (tolerates an optional leading "the" - "update the main project
+        # for Saleem to ..." - which would otherwise break the literal
+        # "update <keyword>" match and fall through to the wrong branch)
+        m = re.search(r'(?:update|edit|change|set)\s+(?:the\s+)?(?:main project|capstone)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
         if m:
             args['intern'] = self._clean_name(m.group(1))
             args['title'] = m.group(2).strip()
@@ -1092,7 +1125,11 @@ class ChatService:
             args['source'] = current_workbook
 
         # update scenario of Saleem to something new
-        m = re.search(r'(?:update|edit|change|set)\s+(?:real-world scenario|real world scenario|scenario|scenrio)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
+        # (tolerates an optional leading "the" - "update the real-world
+        # scenario for Saleem to ..." - which would otherwise break the
+        # literal "update <keyword>" match and fall through to a branch
+        # that mis-captures "the" itself as the intern's name)
+        m = re.search(r'(?:update|edit|change|set)\s+(?:the\s+)?(?:real-world scenario|real world scenario|scenario|scenrio)\s+(?:of|for)\s+(.+?)\s+(?:to|as)\s+(.+)$', text, re.I)
         if m:
             args['intern'] = self._clean_name(m.group(1))
             args['scenario'] = m.group(2).strip()
@@ -1126,6 +1163,16 @@ class ChatService:
         return ChatDraft(str(uuid.uuid4()), 'update_scenario', args)
 
     def _required_four_draft(self, text: str, current_workbook: str | None):
+        lower = (text or '').lower()
+        # "add/create/new intern ..." always means creating a new intern,
+        # even if the message also mentions "main project" or "scenario"
+        # to describe that new intern's details (e.g. "add intern Sara
+        # ... main project should be building a SIEM dashboard"). None of
+        # these four builders edit an intern that doesn't exist yet, so
+        # they must not claim a message that's actually an add-intern
+        # request just because it shares a keyword.
+        if any(p in lower for p in ['add intern', 'create intern', 'new intern']):
+            return None
         for builder in [self._edit_plan_draft, self._extend_intern_draft, self._capstone_draft, self._scenario_draft]:
             draft = builder(text, current_workbook)
             if draft:
