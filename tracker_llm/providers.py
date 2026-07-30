@@ -5,18 +5,50 @@ import json
 import re
 import requests
 from tracker_config.settings import Settings
-from tracker_llm.prompts import SYSTEM_PROMPT
+
+# The full command-routing SYSTEM_PROMPT (tracker_llm/prompts.py) interpolates all 19 command
+# schemas (required/optional args + descriptions) - real, useful context
+# for llm_cli.py's natural-language planner, whose actual job is picking
+# one of those 19 commands. It was previously hardcoded as *every* call's
+# system message regardless of task, so plan-drafting, intern-sheet
+# drafting, and evaluation scoring were all paying ~1000+ tokens per call
+# for command-schema text none of them use. Callers that don't need
+# command routing now get this minimal default instead.
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful assistant. Return ONLY valid JSON. No markdown, no extra commentary. "
+    "Never invent file paths, workbook/source/output filenames, or any field value that is not "
+    "clearly and explicitly present in the user's message - omit a field entirely rather than "
+    "guessing at it from unrelated words in the text."
+)
 
 class LLMProviderError(Exception):
     pass
 
+
+def _log_token_usage(model: str, response_json: dict) -> None:
+    """Print per-call token usage from an OpenAI-compatible chat completion
+    response, so LLM cost/consumption for a single request is visible in
+    the server console / `docker compose logs` instead of being silently
+    discarded. Uses print() rather than the logging module so it shows up
+    with zero extra configuration.
+    """
+    usage = response_json.get("usage") or {}
+    if not usage:
+        return
+    print(
+        f"[LLM usage] model={model} "
+        f"prompt_tokens={usage.get('prompt_tokens')} "
+        f"completion_tokens={usage.get('completion_tokens')} "
+        f"total_tokens={usage.get('total_tokens')}"
+    )
+
 class BaseLLMProvider:
-    def complete_json(self, user_prompt: str) -> dict:
+    def complete_json(self, user_prompt: str, system_prompt: str | None = None) -> dict:
         raise NotImplementedError
 
 class MockLLMProvider(BaseLLMProvider):
     """Rule-based fallback for quick tests without an API key."""
-    def complete_json(self, user_prompt: str) -> dict:
+    def complete_json(self, user_prompt: str, system_prompt: str | None = None) -> dict:
         text = user_prompt.lower()
         # very small planner so tests can run offline
         if "extend" in text and "bilal" in text:
@@ -35,7 +67,7 @@ class GroqProvider(BaseLLMProvider):
             raise LLMProviderError("GROQ_API_KEY is missing")
         self.url = "https://api.groq.com/openai/v1/chat/completions"
 
-    def complete_json(self, user_prompt: str) -> dict:
+    def complete_json(self, user_prompt: str, system_prompt: str | None = None) -> dict:
         headers = {
             "Authorization": f"Bearer {self.settings.groq_api_key}",
             "Content-Type": "application/json",
@@ -45,7 +77,7 @@ class GroqProvider(BaseLLMProvider):
         payload = {
             "model": self.settings.groq_model,
             "messages": [
-                {"role":"system", "content": SYSTEM_PROMPT},
+                {"role":"system", "content": system_prompt or _DEFAULT_SYSTEM_PROMPT},
                 {"role":"user", "content": user_prompt},
             ],
             "temperature": 0,
@@ -54,7 +86,9 @@ class GroqProvider(BaseLLMProvider):
         res = requests.post(self.url, headers=headers, json=payload, timeout=self.settings.llm_timeout, verify=self.settings.llm_verify_ssl)
         if res.status_code >= 400:
             raise LLMProviderError(f"Groq error {res.status_code}: {res.text[:500]}")
-        content = res.json()["choices"][0]["message"]["content"]
+        data = res.json()
+        _log_token_usage(self.settings.groq_model, data)
+        content = data["choices"][0]["message"]["content"]
         return json.loads(content)
 
 class OpenAICompatibleProvider(BaseLLMProvider):
@@ -70,7 +104,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         base = settings.llm_base_url.rstrip("/")
         self.url = base if base.endswith("/chat/completions") else base + "/chat/completions"
 
-    def complete_json(self, user_prompt: str) -> dict:
+    def complete_json(self, user_prompt: str, system_prompt: str | None = None) -> dict:
         headers = {
             "Content-Type": "application/json",
             "User-Agent": self.settings.http_user_agent,
@@ -81,7 +115,7 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         payload = {
             "model": self.settings.llm_model or self.settings.groq_model,
             "messages": [
-                {"role":"system", "content": SYSTEM_PROMPT},
+                {"role":"system", "content": system_prompt or _DEFAULT_SYSTEM_PROMPT},
                 {"role":"user", "content": user_prompt},
             ],
             "temperature": 0,
@@ -90,7 +124,9 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         res = requests.post(self.url, headers=headers, json=payload, timeout=self.settings.llm_timeout, verify=self.settings.llm_verify_ssl)
         if res.status_code >= 400:
             raise LLMProviderError(f"LLM error {res.status_code}: {res.text[:500]}")
-        content = res.json()["choices"][0]["message"]["content"]
+        data = res.json()
+        _log_token_usage(self.settings.llm_model or self.settings.groq_model, data)
+        content = data["choices"][0]["message"]["content"]
         return json.loads(content)
 
 def build_provider(settings: Settings) -> BaseLLMProvider:

@@ -72,6 +72,16 @@ REQUIRED = {
 # legitimately never appears verbatim in the input text.
 _ENUM_FIELDS = {'status'}
 
+# These are always app/session-managed, never user-supplied in a chat
+# message. The groundedness check alone isn't reliable enough to keep a
+# small model from filling them in anyway - observed live: asked to
+# parse "generate progress summary", the model returned
+# workbook="progress" (a real word from the message, so groundedness
+# didn't catch it, just wrongly assigned). Dropped unconditionally
+# before the LLM's args are even considered, so current_workbook/
+# generated-output defaults are the only source for these fields.
+_PATH_FIELDS = {'source', 'workbook', 'output'}
+
 @dataclass
 class ChatDraft:
     draft_id: str
@@ -179,6 +189,8 @@ class ChatService:
             # semantic classification rather than a literal extraction.
             still_missing = {k for k in REQUIRED.get(draft.command, []) if not draft.args.get(k)}
             for k, v in (parsed.get('args') or {}).items():
+                if k in _PATH_FIELDS:
+                    continue
                 if v in [None, '', []]:
                     continue
                 if isinstance(v, str) and re.fullmatch(r'__[a-z_]+__', v):
@@ -519,7 +531,7 @@ class ChatService:
         # about. Drop anything not actually traceable to the user's words.
         args = {
             k: v for k, v in raw_args.items()
-            if k in _ENUM_FIELDS or not isinstance(v, str) or self._is_grounded(v, text)
+            if k not in _PATH_FIELDS and (k in _ENUM_FIELDS or not isinstance(v, str) or self._is_grounded(v, text))
         }
         # Inject current workbook defaults. The LLM must not invent source/output paths.
         if current_workbook:
