@@ -82,6 +82,11 @@ _ENUM_FIELDS = {'status'}
 # generated-output defaults are the only source for these fields.
 _PATH_FIELDS = {'source', 'workbook', 'output'}
 
+# Commands whose task_ref should be corrected toward an actual date/task
+# number found in the message when one exists, rather than trusting
+# whatever free-text span the LLM chose - see _recover_task_ref.
+_TASK_REF_COMMANDS = {'edit_task', 'update_task_status'}
+
 @dataclass
 class ChatDraft:
     draft_id: str
@@ -544,7 +549,30 @@ class ChatService:
             self._normalize_holiday_args_v49(text, args)
         if command == 'add_intern_with_plan' and not args.get('plan_name'):
             self._recover_plan_name(text, args)
+        if command in _TASK_REF_COMMANDS:
+            self._recover_task_ref(text, args)
         return ChatDraft(str(uuid.uuid4()), command, args)
+
+    def _recover_task_ref(self, text: str, args: dict):
+        """Prefer an actual date or task number over whatever free-text
+        span the LLM chose for task_ref.
+
+        Observed live: for "mark Sara's task on 2026-08-04 as
+        completed," the model returned task_ref="Sara's task" - a real
+        substring of the message (so the groundedness check doesn't
+        catch it), just the wrong span. task_ref is meant to identify
+        *which* task (by date, number, or matching description text);
+        when the message actually contains a date or a task number,
+        that is always a more reliable reference than a paraphrase, so
+        it takes priority over the model's guess.
+        """
+        date_m = re.search(r'20\d{2}-\d{2}-\d{2}', text)
+        if date_m:
+            args['task_ref'] = date_m.group(0)
+            return
+        num_m = re.search(r'\btask\s*(?:number|#)?\s*(\d+)\b', text, re.I)
+        if num_m:
+            args['task_ref'] = num_m.group(1)
 
     def _recover_plan_name(self, text: str, args: dict):
         """Deterministic backstop for plan_name on add_intern_with_plan.
@@ -636,6 +664,13 @@ class ChatService:
             if len(dates) >= 2: args['end_date'] = dates[1]
         if command in ['edit_task','update_task_status'] and dates: args['task_ref'] = dates[0]
         m = re.search(r'(?:intern|for|named|name)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
+        if not m:
+            # Possessive phrasing: "mark Sara's task on ... as completed",
+            # "update Sara's project ..." - this doesn't match the pattern
+            # above (no "intern"/"for"/"named"/"name" keyword), so the
+            # intern's own name was previously lost entirely whenever the
+            # LLM path also failed/returned nothing for this phrasing.
+            m = re.search(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})'s\s+(?:task|project|scenario|capstone|main project)\b", text)
         if m and command in ['extend_intern','edit_task','update_task_status','update_capstone','update_scenario','edit_project','update_project_status','apply_plan_to_intern']:
             args['intern'] = m.group(1).strip()
         if command in ['add_intern_basic','add_intern_with_plan']:
@@ -863,6 +898,19 @@ class ChatService:
 
         # Add/create/make a plan 8 weeks X.  <-- this is the bug fix.
         m = re.search(r'\b(?:add|create|make|draft|generate|build)\s+(?:an?|the)?\s*plan\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*-?\s*weeks?\s+([A-Za-z0-9 ._+-]+?)(?:\.|,|$)', normalized, re.I)
+        if m:
+            candidate = self._clean_plan_name_candidate(m.group(1))
+            if candidate:
+                return candidate
+
+        # Create 8 week plan X. (duration comes before the word "plan",
+        # topic comes after it - e.g. "create 8 week plan secops". None
+        # of the patterns above cover this order: they expect either
+        # "topic plan" or "plan [duration] topic", not "[duration] plan
+        # topic". Without this, the name falls through entirely to the
+        # LLM's own free-form choice, which won't reliably match the
+        # canonical name used elsewhere (e.g. "SecOps Foundation").
+        m = re.search(r'\b(?:create|make|draft|generate|build|add)\s+(?:an?|the)?\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*-?\s*weeks?\s+plan\s+([A-Za-z0-9 ._+-]+?)(?:\.|,|$)', normalized, re.I)
         if m:
             candidate = self._clean_plan_name_candidate(m.group(1))
             if candidate:
