@@ -1151,29 +1151,63 @@ class ChatService:
         r'\b(?:(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([A-Za-z]+)|([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?)\s*,?\s+(\d{4})\b'
     )
 
+    # Cheap pre-filter before spending an LLM call in _first_date's
+    # fallback: only bother asking the model if the text plausibly
+    # contains a date at all (a year, an ordinal day, or a month name),
+    # so a message like "extend intern Asad" (genuinely no date) doesn't
+    # trigger an API call every time.
+    _DATE_HINT_RE = re.compile(
+        r'\b(?:19|20)\d{2}\b|\d{1,2}(?:st|nd|rd|th)\b'
+        r'|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b',
+        re.I,
+    )
+
     def _first_date(self, text: str):
         """Return the first date found in text, normalized to yyyy-mm-dd.
 
-        Understands both literal ISO dates and common natural-language
-        forms ("14th July 2026") - deterministic pre-check builders like
-        _extend_intern_draft run before the LLM ever sees the message, so
-        without this, any non-ISO date in "extend"/"capstone"/"scenario"
-        phrasing was silently dropped rather than parsed.
+        Understands literal ISO dates and common natural-language forms
+        ("14th July 2026") via regex+dateutil first (instant, free) -
+        deterministic pre-check builders like _extend_intern_draft run
+        before the LLM ever sees the message, so without this, any
+        non-ISO date in "extend"/"capstone"/"scenario" phrasing was
+        silently dropped rather than parsed. Falls back to an LLM call
+        only for phrasing unusual enough that the regex genuinely can't
+        make sense of it, since normalizing "some date next Tuesday
+        after the sprint" isn't something a fixed pattern can cover.
         """
         text = text or ''
         m = re.search(r'20\d{2}-\d{2}-\d{2}', text)
         if m:
             return m.group(0)
-        if not _date_parser:
-            return None
-        m = self._NATURAL_DATE_RE.search(text)
-        if not m:
-            return None
+        if _date_parser:
+            m = self._NATURAL_DATE_RE.search(text)
+            if m:
+                try:
+                    dt = _date_parser.parse(m.group(0), fuzzy=False)
+                    return dt.strftime('%Y-%m-%d')
+                except (ValueError, OverflowError):
+                    pass
+        if self.provider and self._DATE_HINT_RE.search(text):
+            return self._llm_extract_date(text)
+        return None
+
+    def _llm_extract_date(self, text: str):
+        prompt = f"""Find the single calendar date mentioned in this message, in any format or phrasing, and normalize it to ISO format.
+
+Message:
+{text}
+
+Return ONLY this JSON shape, nothing else:
+{{"date": "yyyy-mm-dd"}}
+
+If no real calendar date is mentioned, return: {{"date": null}}
+"""
         try:
-            dt = _date_parser.parse(m.group(0), fuzzy=False)
-            return dt.strftime('%Y-%m-%d')
-        except (ValueError, OverflowError):
+            data = self.provider.complete_json(prompt)
+            value = (data or {}).get('date')
+        except Exception:
             return None
+        return value if self._is_valid_iso_date(value) else None
 
     def _stamped_output(self, command: str) -> str:
         return f'{command}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
@@ -1487,6 +1521,10 @@ Rules:
 - Do not include markdown.
 - Do not include <strong>, <br>, or data-lexical-text.
 - Do not invent source, output, or workbook paths.
+- plan_name should be a short, properly spelled, professional plan title
+  reflecting the requested topic - correct any obvious typos in how the
+  user wrote the topic (e.g. "Leanr Github" -> "Learn GitHub"), and do not
+  echo filler words like "to"/"for"/"a new plan" from their phrasing.
 """
 
     def _draft_plan_with_llm(self, text: str, current_workbook: str | None) -> ChatDraft:
@@ -1514,12 +1552,14 @@ Make sure weeks is inside args.weeks and contains detailed topic-specific week o
                     raw = self.provider.complete_json(prompt)
                     args = self._normalize_llm_plan_payload(raw)
 
+                    # Trust the LLM's own plan name over the regex-extracted
+                    # one now that the model is reliable enough to name
+                    # things sensibly (and can fix a typo like "Leanr" ->
+                    # "Learn" that regex extraction never could). The regex
+                    # name is only used as a fallback, when the LLM didn't
+                    # return a usable one at all - see fallback_name above.
                     candidate_name = self._clean_llm_text(args.get("plan_name")) or fallback_name
                     candidate_name = self._normalize_plan_name(candidate_name, text)
-
-                    explicit_prompt_name = self._explicit_plan_name_from_prompt(text)
-                    if explicit_prompt_name:
-                        candidate_name = explicit_prompt_name
 
                     candidate_description = self._clean_llm_text(args.get("description")) or description
                     candidate_weeks = self._clean_plan_weeks(args.get("weeks"), weeks_count)
