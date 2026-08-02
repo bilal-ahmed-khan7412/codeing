@@ -227,9 +227,27 @@ class ChatService:
                 if k in _DATE_FIELDS:
                     if isinstance(v, str) and not self._is_valid_iso_date(v):
                         continue
+                elif isinstance(v, str) and self._looks_like_bare_date(v):
+                    # Observed live: replying "26th october 2026" to a draft
+                    # missing both new_end and plan_name got assigned to
+                    # plan_name instead - it's grounded (appears verbatim)
+                    # so the check below wouldn't catch it. A date-shaped
+                    # answer is never a real value for a non-date field.
+                    continue
                 elif k not in _ENUM_FIELDS and isinstance(v, str) and not self._is_grounded(v, text):
                     continue
                 draft.args[k] = v
+            # If exactly one date field is still missing after the above,
+            # the reply itself may just be a bare date ("26th october
+            # 2026") that the LLM misassigned or dropped entirely -
+            # recover it directly. (Only when unambiguous: if two date
+            # fields are both missing, e.g. start_date and end_date, a
+            # single recovered date can't safely be assigned to either.)
+            missing_dates = [k for k in still_missing if k in _DATE_FIELDS and not draft.args.get(k)]
+            if len(missing_dates) == 1:
+                recovered = self._first_date(text)
+                if recovered:
+                    draft.args[missing_dates[0]] = recovered
             self._force_enrich_ready_add_intern_with_plan(draft)
             return self._response_for_draft(draft)
 
@@ -237,7 +255,7 @@ class ChatService:
         args = draft.args
 
         # Common field extractions.
-        dates = re.findall(r'20\d{2}-\d{2}-\d{2}', text)
+        dates = self._find_all_dates(text)
         if draft.command in ['add_intern_basic','add_intern_with_plan']:
             if 'name' not in args or not args.get('name'):
                 m = re.search(r'(?:intern name is|name is|named|intern)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
@@ -712,7 +730,7 @@ class ChatService:
         return 'summary'
 
     def _extract_common(self, text: str, lower: str, command: str, args: dict):
-        dates = re.findall(r'20\d{2}-\d{2}-\d{2}', text)
+        dates = self._find_all_dates(text)
         if command == 'extend_intern' and dates: args['new_end'] = dates[-1]
         if command == 'add_holiday' and dates: args['date'] = dates[-1]
         if command in ['add_intern_basic','add_intern_with_plan']:
@@ -1102,6 +1120,22 @@ class ChatService:
         except (TypeError, ValueError):
             return False
 
+    def _looks_like_bare_date(self, value: str) -> bool:
+        """True if the whole string is basically just a date, nothing else.
+
+        Deliberately doesn't use the LLM-fallback branch of _first_date -
+        this only needs the cheap deterministic check, and is called on
+        every candidate field value, not just ones already suspected of
+        being a date.
+        """
+        v = (value or '').strip()
+        if not v:
+            return False
+        if re.fullmatch(r'20\d{2}-\d{2}-\d{2}', v):
+            return True
+        m = self._NATURAL_DATE_RE.fullmatch(v)
+        return bool(m)
+
     def _is_grounded(self, value, text: str) -> bool:
         """True if value plausibly came from the user's own words."""
         v = str(value).strip().lower()
@@ -1190,6 +1224,27 @@ class ChatService:
         if self.provider and self._DATE_HINT_RE.search(text):
             return self._llm_extract_date(text)
         return None
+
+    def _find_all_dates(self, text: str) -> list[str]:
+        """Like _first_date but returns every date found, in order.
+
+        Used where position matters (e.g. first date = start_date, second
+        = end_date). Deliberately has no LLM fallback (unlike _first_date)
+        - it's called on every reply while filling a draft's missing
+        fields, not just ones already believed to contain a date, so an
+        API call here would fire far too often.
+        """
+        text = text or ''
+        results = [m.group(0) for m in re.finditer(r'20\d{2}-\d{2}-\d{2}', text)]
+        if results or not _date_parser:
+            return results
+        for m in self._NATURAL_DATE_RE.finditer(text):
+            try:
+                dt = _date_parser.parse(m.group(0), fuzzy=False)
+                results.append(dt.strftime('%Y-%m-%d'))
+            except (ValueError, OverflowError):
+                continue
+        return results
 
     def _llm_extract_date(self, text: str):
         prompt = f"""Find the single calendar date mentioned in this message, in any format or phrasing, and normalize it to ISO format.
