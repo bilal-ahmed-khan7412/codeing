@@ -172,6 +172,17 @@ class ChatService:
                         v = json.loads(v)
                     except Exception:
                         pass
+                # Manually typing a date into the proposal's edit panel
+                # (e.g. "25th October 2026" into New End) bypasses every
+                # chat-text date extraction fixed elsewhere - this is a
+                # separate save path with no normalization of its own, so
+                # the un-normalized text was silently stored and only
+                # surfaced as "new_end must be a valid ISO date" once the
+                # user clicked Approve.
+                if k in _DATE_FIELDS and isinstance(v, str) and not self._is_valid_iso_date(v):
+                    normalized = self._first_date(v)
+                    if normalized:
+                        v = normalized
                 draft.args[k] = v
         self._force_enrich_ready_add_intern_with_plan(draft)
         return self._response_for_draft(draft)
@@ -1587,7 +1598,7 @@ Rules:
         fallback_name = self._normalize_plan_name(fallback_name, text)
         weeks_count = self._extract_weeks_count(text) or 8
         source = current_workbook or ""
-        output = f"Plan_{self._safe_name(fallback_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        output_stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         plan_name = fallback_name
         description = self._clean_llm_text(text)
@@ -1643,6 +1654,11 @@ Make sure weeks is inside args.weeks and contains detailed topic-specific week o
         plan_name = self._clean_llm_text(plan_name) or fallback_name
         description = self._clean_llm_text(description)
         weeks = self._clean_plan_weeks(weeks, weeks_count)
+        # Filename is derived from the final plan_name, not the pre-LLM
+        # fallback_name - otherwise a typo the LLM corrected in the name
+        # itself (e.g. "Leanr" -> "Learn") would still show up in the
+        # saved .xlsx filename.
+        output = f"Plan_{self._safe_name(plan_name)}_{output_stamp}.xlsx"
 
         warnings = self._plan_quality_warnings(weeks, plan_name)
         if generation_error:
