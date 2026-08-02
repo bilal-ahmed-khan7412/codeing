@@ -972,10 +972,18 @@ class ChatService:
         # Remove leading duration tokens accidentally captured as part of the plan name.
         # Examples: "8 Devops", "8 weeks Devops", "eight weeks AI Engineering".
         value = re.sub(r'^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*-?\s*(?:week|weeks)?\s+', '', value, flags=re.I).strip()
+        # Strip a leading "for" too: "plan for beginners in cloud
+        # computing" otherwise captures "for beginners..." whole, since
+        # nothing marks where the topic actually starts.
+        value = re.sub(r'^for\s+', '', value, flags=re.I).strip()
         value = re.sub(r'\b(?:an?|the)\b', '', value, flags=re.I).strip()
         value = re.sub(r'\b(?:week|weeks)\b', '', value, flags=re.I).strip()
         value = re.sub(r'\s+', ' ', value).strip()
-        if not value or value.lower() in {'plan', 'learning', 'custom'}:
+        # Generic filler words, not real topic names. Without this, "add a
+        # new plan for secops ..." matches the "TOPIC plan" pattern with
+        # "new" captured as the topic (it's the word directly before
+        # "plan"), producing a plan literally named "New Foundation".
+        if not value or value.lower() in {'plan', 'learning', 'custom', 'new', 'simple', 'basic'}:
             return None
         # The capturing regexes above have no reliable right-hand boundary
         # for free-form sentences, so a trailing clause like "... plan for
@@ -1015,8 +1023,6 @@ class ChatService:
             elif low in {'ai', 'ml', 'llm'}: words.append(low.upper())
             else: words.append(part[:1].upper() + part[1:])
         cleaned = ' '.join(words)
-        if 'foundation' not in cleaned.lower() and 'plan' not in cleaned.lower():
-            cleaned += ' Foundation'
         return cleaned
 
     def _extract_plan_name(self, text: str) -> str | None:
