@@ -1,5 +1,6 @@
 
 from __future__ import annotations
+import time
 from datetime import datetime
 from tracker_audit.audit_db import get_conn, init_db, rows_to_dicts
 from tracker_auth.passwords import hash_password, verify_password, is_hashed
@@ -9,10 +10,48 @@ def now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
+# Login rate-limiting policy. Single-process app (not horizontally
+# scaled), so an in-memory tracker is sufficient - no Redis/DB table
+# needed. Keyed by lowercased email so this doesn't depend on trusting
+# a client-supplied IP header.
+LOGIN_ATTEMPT_LIMIT = 5
+LOGIN_ATTEMPT_WINDOW_SECONDS = 15 * 60
+LOGIN_LOCKOUT_SECONDS = 15 * 60
+
+
 class UserService:
     def __init__(self):
         init_db()
         self.ensure_super_admin()
+        self._failed_logins: dict[str, list[float]] = {}
+        self._locked_until: dict[str, float] = {}
+
+    def is_locked_out(self, email: str) -> bool:
+        key = (email or '').strip().lower()
+        until = self._locked_until.get(key)
+        if until is None:
+            return False
+        if time.time() >= until:
+            self._locked_until.pop(key, None)
+            self._failed_logins.pop(key, None)
+            return False
+        return True
+
+    def record_failed_attempt(self, email: str):
+        key = (email or '').strip().lower()
+        if not key:
+            return
+        cutoff = time.time() - LOGIN_ATTEMPT_WINDOW_SECONDS
+        attempts = [t for t in self._failed_logins.get(key, []) if t >= cutoff]
+        attempts.append(time.time())
+        self._failed_logins[key] = attempts
+        if len(attempts) >= LOGIN_ATTEMPT_LIMIT:
+            self._locked_until[key] = time.time() + LOGIN_LOCKOUT_SECONDS
+
+    def clear_attempts(self, email: str):
+        key = (email or '').strip().lower()
+        self._failed_logins.pop(key, None)
+        self._locked_until.pop(key, None)
 
     def authenticate(self, email: str, password: str):
         conn = get_conn()
@@ -114,6 +153,8 @@ class UserService:
             raise ValueError('Name, email, and password are required.')
         if '@' not in email:
             raise ValueError('Please enter a valid email address.')
+        if len(password) < 8:
+            raise ValueError('Password must be at least 8 characters long.')
         conn = get_conn()
         existing = conn.execute('SELECT email,status,role FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
         if existing:

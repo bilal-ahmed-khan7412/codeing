@@ -1,5 +1,6 @@
 from __future__ import annotations
 from tracker_evaluation.evaluation_service import save_upload, get_tracker_interns, get_eval_scorecards, match_candidates, get_tracker_metrics, build_questions, suggest_score, finalize_evaluation
+import os
 import secrets
 import string
 
@@ -10,6 +11,7 @@ import shutil
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from tracker_commands.executor import CommandExecutor
 from tracker_commands.validator import CommandValidationError
@@ -28,6 +30,37 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="Intern Tracker Web UI", version="0.10")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), name="static")
+
+# Only set the cookie's Secure flag once actually served over HTTPS (e.g.
+# behind a TLS-terminating reverse proxy) - forcing it on in plain-HTTP dev
+# would silently stop the browser from ever sending the session cookie back.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() == "true"
+
+# All pages here are server-rendered HTML with inline <script> blocks (no
+# build step / bundler), so script-src and style-src need 'unsafe-inline'.
+# Nothing in this app loads from a third-party origin, so default-src
+# 'self' plus frame-ancestors 'none' still meaningfully blocks clickjacking
+# and cross-site resource injection even though inline scripts stay allowed.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "frame-ancestors 'none'"
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = _CSP
+    return response
+
+
 executor = CommandExecutor()
 chat_service = ChatService()
 init_db()
@@ -38,6 +71,15 @@ task_service = TaskService()
 
 def safe_name(name: str) -> str:
     return Path(name).name.replace("/", "_").replace("\\", "_")
+
+
+ALLOWED_UPLOAD_EXTENSIONS = {".xlsx", ".xls"}
+
+
+def require_allowed_extension(filename: str):
+    ext = Path(filename or "").suffix.lower()
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type '{ext}'. Only .xlsx and .xls files are allowed.")
 
 
 def user_upload_dir(user: dict) -> Path:
@@ -143,15 +185,21 @@ def login_page():
 
 @app.post('/api/login')
 def api_login(payload: dict):
-    user = user_service.authenticate(payload.get('email',''), payload.get('password',''))
+    email = payload.get('email','')
+    if user_service.is_locked_out(email):
+        audit_service.log({'name':'Unknown','email':email}, interface='Auth', action='Login Blocked', status='Failed', summary='Too many failed attempts, temporarily locked out')
+        return JSONResponse(status_code=429, content={'ok': False, 'error': 'Too many failed login attempts. Please try again in 15 minutes.'})
+    user = user_service.authenticate(email, payload.get('password',''))
     if not user:
-        audit_service.log({'name':'Unknown','email':payload.get('email','')}, interface='Auth', action='Login Failed', status='Failed', summary='Invalid login or inactive user')
+        user_service.record_failed_attempt(email)
+        audit_service.log({'name':'Unknown','email':email}, interface='Auth', action='Login Failed', status='Failed', summary='Invalid login or inactive user')
         return JSONResponse(status_code=401, content={'ok': False, 'error': 'Invalid login or inactive user'})
+    user_service.clear_attempts(email)
     audit_service.log(user, interface='Auth', action='Login', status='Success', summary='User logged in')
     token = create_session_token(user)
     public_user = {k: v for k, v in user.items() if k != 'password'}
     res = JSONResponse({'ok': True, 'user': public_user})
-    res.set_cookie('session_token', token, httponly=True, samesite='lax', max_age=SESSION_TTL_SECONDS)
+    res.set_cookie('session_token', token, httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
     return res
 
 @app.get('/logout')
@@ -172,15 +220,19 @@ def api_me(request: Request):
 @app.get('/users', response_class=HTMLResponse)
 def users_page(request: Request):
     user = current_user_from_request(request)
-    if not can_manage_users(user):
+    if not user:
         return RedirectResponse('/login')
+    if not can_manage_users(user):
+        return RedirectResponse('/chat')
     return (BASE_DIR / 'web' / 'users.html').read_text(encoding='utf-8')
 
 @app.get('/logs', response_class=HTMLResponse)
 def logs_page(request: Request):
     user = current_user_from_request(request)
-    if not can_view_logs(user):
+    if not user:
         return RedirectResponse('/login')
+    if not can_view_logs(user):
+        return RedirectResponse('/chat')
     return (BASE_DIR / 'web' / 'logs.html').read_text(encoding='utf-8')
 
 @app.get('/tasks', response_class=HTMLResponse)
@@ -298,6 +350,7 @@ def user_dashboard(request: Request):
 @app.post("/api/upload")
 def upload_workbook(request: Request, file: UploadFile = File(...)):
     user = require_login(request)
+    require_allowed_extension(file.filename)
     filename = safe_name(file.filename or "workbook.xlsx")
     dst = user_upload_dir(user) / filename
     with dst.open("wb") as f:
@@ -544,7 +597,7 @@ def api_update_profile(request: Request, payload: dict):
     updated = user_service.get_user_by_id(actor['id'])
     res = JSONResponse({'ok': True})
     if updated:
-        res.set_cookie('session_token', create_session_token(updated), httponly=True, samesite='lax', max_age=SESSION_TTL_SECONDS)
+        res.set_cookie('session_token', create_session_token(updated), httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
     return res
 
 
@@ -736,6 +789,10 @@ def api_evaluation_upload(request: Request, tracker: UploadFile = File(...), eva
     user = require_login(request)
     if user.get('role') not in {'Super Admin', 'Admin'}:
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin or Super Admin only'})
+    for f in (tracker, evaluation):
+        ext = Path(f.filename or '').suffix.lower()
+        if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+            return JSONResponse(status_code=400, content={'ok': False, 'error': f"Unsupported file type '{ext}'. Only .xlsx and .xls files are allowed."})
     try:
         tracker_path = save_upload(tracker, 'eval_tracker')
         eval_path = save_upload(evaluation, 'eval_framework')

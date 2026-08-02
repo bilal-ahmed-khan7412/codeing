@@ -18,3 +18,4 @@ outputs/*
 *.bak
 *.bak_v*
 *.tmp
+server.log
