@@ -972,10 +972,11 @@ class ChatService:
         # Remove leading duration tokens accidentally captured as part of the plan name.
         # Examples: "8 Devops", "8 weeks Devops", "eight weeks AI Engineering".
         value = re.sub(r'^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*-?\s*(?:week|weeks)?\s+', '', value, flags=re.I).strip()
-        # Strip a leading "for" too: "plan for beginners in cloud
-        # computing" otherwise captures "for beginners..." whole, since
-        # nothing marks where the topic actually starts.
-        value = re.sub(r'^for\s+', '', value, flags=re.I).strip()
+        # Strip a leading "for"/"to" too: "plan for beginners in cloud
+        # computing" / "plan to learn github" otherwise capture "for
+        # beginners..."/"to learn github" whole, since nothing marks where
+        # the topic itself actually starts.
+        value = re.sub(r'^(?:for|to)\s+', '', value, flags=re.I).strip()
         value = re.sub(r'\b(?:an?|the)\b', '', value, flags=re.I).strip()
         value = re.sub(r'\b(?:week|weeks)\b', '', value, flags=re.I).strip()
         value = re.sub(r'\s+', ' ', value).strip()
@@ -1117,6 +1118,12 @@ class ChatService:
     def _clean_name(self, value: str) -> str:
         value = (value or '').strip().strip(' .,:;')
         value = re.sub(r'^(of|for|intern|the intern)\s+', '', value, flags=re.I).strip()
+        # "extend intern jameel with this plan" (no "to DATE" boundary to
+        # stop at) otherwise swallows the trailing plan-reference clause
+        # whole, producing an intern named "Jameel With This Plan". "with"
+        # essentially never legitimately appears inside a person's name in
+        # this app's phrasing conventions, so cut there.
+        value = re.sub(r'\s+with\s+.*$', '', value, flags=re.I).strip()
         if not value:
             return value
         parts = []
@@ -1141,7 +1148,7 @@ class ChatService:
     # right next to a day number, rather than handing arbitrary substrings
     # to dateutil, which would happily misparse unrelated text as a date.
     _NATURAL_DATE_RE = re.compile(
-        r'\b(?:(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)|([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?)\s*,?\s+(\d{4})\b'
+        r'\b(?:(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?([A-Za-z]+)|([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?)\s*,?\s+(\d{4})\b'
     )
 
     def _first_date(self, text: str):
