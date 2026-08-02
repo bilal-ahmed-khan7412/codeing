@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Intern Tracker Chat Assistant</title>
+  <link rel="stylesheet" href="/static/css/app.css">
   <style>
     :root { --blue:#305496; --light:#f4f6fb; --border:#d9e2ef; --text:#1f2937; --muted:#64748b; --assistant:#ffffff; --user:#dbeafe; --ok:#166534; --bad:#991b1b; }
     * { box-sizing:border-box; }
@@ -23,7 +24,7 @@
     .msg.system { margin:10px auto; background:#fff7ed; color:#9a3412; max-width:92%; }
     .composer { padding:14px; border-top:1px solid var(--border); background:white; display:flex; gap:10px; align-items:flex-end; }
     textarea { flex:1; min-height:58px; max-height:160px; resize:vertical; padding:12px; border:1px solid var(--border); border-radius:12px; font:inherit; }
-    button { border:1px solid var(--border); border-radius:11px; padding:10px 14px; font-weight:700; cursor:pointer; background:white; }
+    button { border:1px solid var(--border); border-radius:11px; padding:10px 14px; font-weight:700; cursor:pointer; background:white; color:var(--text); }
     button.primary { background:var(--blue); color:white; border-color:var(--blue); }
     button.success { background:#16a34a; color:white; border-color:#16a34a; }
     button.danger { background:#fee2e2; color:#991b1b; border-color:#fecaca; }
@@ -258,15 +259,15 @@ details.week-card summary {
     <h1>Intern Tracker Chat Assistant</h1>
     <div style="font-size:13px; opacity:.9;">Draft, review, approve, then execute. The assistant does not execute without approval.</div></div>
   
-<div style="padding:0 28px 12px;background:#305496;"><a style="color:white;font-weight:700;margin-right:14px;" href="/users">Users</a><a style="color:white;font-weight:700;margin-right:14px;" href="/logs">Logs</a><a style="color:white;font-weight:700;margin-right:14px;" href="/tasks">Tasks</a><a href="/profile">Profile</a><a style="color:white;font-weight:700;" href="/logout">Logout</a></div></header>
+<div style="padding:0 28px 12px;background:#305496;" id="nav"></div></header>
 <main>
   <section class="panel chat-shell">
     <div class="chat-top">
       <div>
         <b>Conversation</b>
         <div class="small">The assistant will ask for missing info and show a clean proposal.</div></div>
-      <div id="approvalState" class="small">No active proposal</div></div>
-    <div id="chatLog"></div>
+      <div id="approvalState" class="small" aria-live="polite">No active proposal</div></div>
+    <div id="chatLog" aria-live="polite"></div>
     <div class="composer">
       <textarea id="chatInput" placeholder="Example: create an 8 week OpenShift plan for beginner interns with weekly projects"></textarea>
       <button class="primary" onclick="sendChat()">Send</button></div>
@@ -353,11 +354,11 @@ function renderAdminFiles(data){
   box.innerHTML = rows.map(x => `<div class="file-row"><span>${escapeHtml(x.owner + ' — ' + x.folder + ' / ' + x.name)}</span><button class="mini" onclick="deleteFile('${x.folder}', ${JSON.stringify(x.name)}, '${x.owner_id}')">Delete</button></div>`).join('');
 }
 async function deleteFile(folder, name, ownerId){
-  if(!confirm(`Delete ${name}? This cannot be undone.`)) return;
+  if(!await confirmDialog(`Delete ${name}? This cannot be undone.`)) return;
   const body = ownerId ? {folder, name, owner_id: ownerId} : {folder, name};
   const res = await fetch('/api/files/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
   const data = await res.json();
-  if(!data.ok){ alert(data.error || 'Delete failed.'); return; }
+  if(!data.ok){ toast(data.error || 'Delete failed.', 'error'); return; }
   await refreshFiles();
 }
 function selectWorkbookFromDropdown(){ const val=document.getElementById('fileSelect').value; if(val) setCurrentWorkbook(val); }
@@ -489,6 +490,7 @@ async function submitMissing(){
 async function approveChat(){
   if(!activeDraftId) return;
   document.getElementById('approvalState').textContent = 'Executing...';
+  document.querySelectorAll('.proposal-actions button, .proposal-footer button').forEach(b=>b.disabled=true);
   const res=await fetch('/api/chat/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft_id:activeDraftId})});
   const data=await res.json();
   if(data.ok){
@@ -858,59 +860,9 @@ init();
 
 
 
-<script id="v69-consistent-profile-nav">
-async function v69ConsistentProfileNav(){
-  try{
-    const r = await fetch('/api/me');
-    const d = await r.json();
-    const user = d.user || null;
-    if(!user) return;
-    const role = String(user.role || '').toLowerCase();
-
-    let nav = document.querySelector('header .nav') || document.querySelector('header div:last-child') || document.querySelector('header');
-    if(!nav) return;
-
-    function hasHref(href){ return !!document.querySelector('header a[href="' + href + '"]'); }
-    function addLink(href, text){
-      if(hasHref(href)) return;
-      const a = document.createElement('a');
-      a.href = href;
-      a.textContent = text;
-      a.style.color = 'white';
-      a.style.fontWeight = '700';
-      a.style.marginLeft = '14px';
-      nav.appendChild(a);
-    }
-
-    // Profile should be visible to every logged-in role.
-    addLink('/profile', 'Profile');
-
-    // Logout should also be consistently visible.
-    addLink('/logout', 'Logout');
-
-    // Normal users should not see governance/admin navigation.
-    if(role === 'user'){
-      document.querySelectorAll('header a[href="/users"], header a[href="/logs"], header a[href="/tasks"]').forEach(a => a.remove());
-    }
-
-    // Admin and Super Admin should have governance links available on main pages.
-    if(role === 'admin' || role === 'super admin'){
-      addLink('/users', 'Users');
-      addLink('/logs', 'Logs');
-      addLink('/tasks', 'Tasks');
-    }
-  }catch(e){
-    // Route-level permissions remain the security layer.
-  }
-}
-v69ConsistentProfileNav();
-</script>
-
-
-<script id="v70-evaluation-nav">
-async function v70EvaluationNav(){try{const r=await fetch('/api/me');const d=await r.json();const role=((d.user&&d.user.role)||'').toLowerCase();if(role==='admin'||role==='super admin'){let nav=document.querySelector('header .nav')||document.querySelector('header div:last-child')||document.querySelector('header');if(nav&&!document.querySelector('header a[href="/evaluation"]')){const a=document.createElement('a');a.href='/evaluation';a.textContent='Evaluation';a.style.color='white';a.style.fontWeight='700';a.style.marginLeft='14px';nav.appendChild(a);}}}catch(e){}}
-v70EvaluationNav();
-</script>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/ui.js"></script>
+<script>renderNav();</script>
 
 
 

@@ -1,12 +1,14 @@
 <!doctype html><html><head><title>Users</title>
-<style>
-body{font-family:Arial,sans-serif;background:#f4f6fb;margin:0;color:#1f2937}header{background:#305496;color:white;padding:18px 28px;display:flex;justify-content:space-between;align-items:center}header a{color:white;font-weight:700;margin-left:14px}main{max-width:1100px;margin:0 auto;padding:20px}.card{background:white;border:1px solid #d9e2ef;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,23,42,.06);margin-bottom:16px}button{background:#305496;color:white;border:none;border-radius:10px;padding:9px 12px;font-weight:700;cursor:pointer;margin:2px}table{width:100%;border-collapse:collapse;background:white}th,td{border-bottom:1px solid #e5e7eb;text-align:left;padding:8px;font-size:13px;vertical-align:top}th{background:#eef2ff}.danger{background:#991b1b}.success{background:#166534}.muted{color:#64748b;font-size:13px}.badge{padding:3px 8px;border-radius:999px;background:#e0f2fe;color:#075985;font-weight:700;font-size:12px}.error{color:#991b1b;font-weight:700}</style>
+<link rel="stylesheet" href="/static/css/app.css">
 </head><body>
-<header><h2>User Management</h2><div><a href="/chat">Chat</a><a href="/logs">Logs</a><a href="/tasks">Tasks</a><a href="/profile">Profile</a><a href="/logout">Logout</a></div></header>
-<main><div class="card"><h3>Access Requests & Users</h3><p class="muted">Admins can approve and manage Users only. Super Admin can approve Users/Admins and manage Admins.</p><p id="msg" class="muted"></p><table><thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div>
-<div class="card"><h3>Password Reset Requests</h3><p class="muted">Admins can reset normal Users only. Super Admin can reset Admins and Users. Temporary passwords are shown once.</p><p id="resetMsg" class="muted"></p><table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Requested</th><th>Remarks</th><th>Actions</th></tr></thead><tbody id="resetRows"></tbody></table></div>
+<header><h2>User Management</h2><div id="nav"></div></header>
+<main><div class="card"><h3>Access Requests & Users</h3><p class="muted">Admins can approve and manage Users only. Super Admin can approve Users/Admins and manage Admins.</p><p id="msg" class="muted" aria-live="polite"></p><table><thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="card"><h3>Password Reset Requests</h3><p class="muted">Admins can reset normal Users only. Super Admin can reset Admins and Users. Temporary passwords are shown once.</p><p id="resetMsg" class="muted" aria-live="polite"></p><table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Requested</th><th>Remarks</th><th>Actions</th></tr></thead><tbody id="resetRows"></tbody></table></div>
 </main>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/ui.js"></script>
 <script>
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 let meUser=null;
 function isSuper(){return (meUser.role||'').toLowerCase()==='super admin'}
 function isAdmin(){return (meUser.role||'').toLowerCase()==='admin'}
@@ -15,99 +17,46 @@ async function api(url,payload){const r=await fetch(url,{method:'POST',headers:{
 async function load(){const me=await fetch('/api/me').then(r=>r.json());meUser=me.user||{};const r=await fetch('/api/users');const d=await r.json();if(!d.ok&&d.error){showMsg(d.error,true);return}const users=d.users||[];rows.innerHTML=users.map(u=>rowHtml(u)).join('')}
 function rowHtml(u){let actions='';
   if(u.status==='Pending'){
-    actions+=`<button class="success" onclick="approve(${u.id},'User')">Approve User</button>`;
-    if(isSuper()) actions+=`<button onclick="approve(${u.id},'Admin')">Approve Admin</button>`;
-    actions+=`<button class="danger" onclick="rejectUser(${u.id})">Reject</button>`;
+    actions+=`<button class="success" onclick="approve(this,${u.id},'User')">Approve User</button>`;
+    if(isSuper()) actions+=`<button onclick="approve(this,${u.id},'Admin')">Approve Admin</button>`;
+    actions+=`<button class="danger" onclick="rejectUser(this,${u.id})">Reject</button>`;
   }
   if(u.status==='Active'&&u.role!=='Super Admin'){
-    if(isSuper() || (isAdmin()&&u.role==='User')) actions+=`<button class="danger" onclick="deactivate(${u.id})">Deactivate</button>`;
-    if(isSuper()&&u.role==='User') actions+=`<button onclick="changeRole(${u.id},'Admin')">Make Admin</button>`;
-    if(isSuper()&&u.role==='Admin') actions+=`<button onclick="changeRole(${u.id},'User')">Make User</button>`;
+    if(isSuper() || (isAdmin()&&u.role==='User')) actions+=`<button class="danger" onclick="deactivate(this,${u.id})">Deactivate</button>`;
+    if(isSuper()&&u.role==='User') actions+=`<button onclick="changeRole(this,${u.id},'Admin')">Make Admin</button>`;
+    if(isSuper()&&u.role==='Admin') actions+=`<button onclick="changeRole(this,${u.id},'User')">Make User</button>`;
   }
   if(u.status==='Inactive'){
-    if(isSuper() || (isAdmin()&&u.role==='User')) actions+=`<button class="success" onclick="reactivate(${u.id})">Reactivate</button>`;
+    if(isSuper() || (isAdmin()&&u.role==='User')) actions+=`<button class="success" onclick="reactivate(this,${u.id})">Reactivate</button>`;
   }
-  return `<tr><td>${u.name}</td><td>${u.email}</td><td>${u.department||''}</td><td><span class="badge">${u.role}</span></td><td>${u.status}</td><td>${u.last_login||''}</td><td>${actions}</td></tr>`}
-async function approve(id,role){if(await api('/api/users/approve',{user_id:id,role}))load()}
-async function rejectUser(id){if(await api('/api/users/reject',{user_id:id}))load()}
-async function deactivate(id){if(!confirm('Deactivate this user?'))return;if(await api('/api/users/deactivate',{user_id:id}))load()}
-async function reactivate(id){if(await api('/api/users/reactivate',{user_id:id}))load()}
-async function changeRole(id,role){if(await api('/api/users/role',{user_id:id,role}))load()}
+  return `<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.department||'')}</td><td><span class="badge">${escapeHtml(u.role)}</span></td><td>${escapeHtml(u.status)}</td><td>${escapeHtml(u.last_login||'')}</td><td>${actions}</td></tr>`}
+async function approve(btn,id,role){if(await withLoading(btn,()=>api('/api/users/approve',{user_id:id,role})))load()}
+async function rejectUser(btn,id){if(await withLoading(btn,()=>api('/api/users/reject',{user_id:id})))load()}
+async function deactivate(btn,id){if(!await confirmDialog('Deactivate this user?'))return;if(await withLoading(btn,()=>api('/api/users/deactivate',{user_id:id})))load()}
+async function reactivate(btn,id){if(await withLoading(btn,()=>api('/api/users/reactivate',{user_id:id})))load()}
+async function changeRole(btn,id,role){if(await withLoading(btn,()=>api('/api/users/role',{user_id:id,role})))load()}
 load();
-</script>
 
-
-
-<script id="v67-reset-requests-js">
 async function loadResetRequests(){
   const el=document.getElementById('resetRows'); if(!el)return;
   const r=await fetch('/api/password-reset/requests'); let d={}; try{d=await r.json()}catch(e){d={error:'Could not load reset requests'}};
-  if(!d.ok){el.innerHTML=`<tr><td colspan="7">${d.error||'Not available'}</td></tr>`;return;}
-  el.innerHTML=(d.requests||[]).map(x=>{let actions=''; if(x.status==='Pending'){actions+=`<button onclick="completeReset(${x.id})">Set Temporary Password</button><button class="danger" onclick="rejectReset(${x.id})">Reject</button>`;} return `<tr><td>${x.email}</td><td>${x.name||''}</td><td>${x.role||''}</td><td>${x.status}</td><td>${x.requested_at}</td><td>${x.remarks||''}</td><td>${actions}</td></tr>`}).join('');
+  if(!d.ok){el.innerHTML=`<tr><td colspan="7">${escapeHtml(d.error||'Not available')}</td></tr>`;return;}
+  el.innerHTML=(d.requests||[]).map(x=>{let actions=''; if(x.status==='Pending'){actions+=`<button onclick="completeReset(this,${x.id})">Set Temporary Password</button><button class="danger" onclick="rejectReset(this,${x.id})">Reject</button>`;} return `<tr><td>${escapeHtml(x.email)}</td><td>${escapeHtml(x.name||'')}</td><td>${escapeHtml(x.role||'')}</td><td>${escapeHtml(x.status)}</td><td>${escapeHtml(x.requested_at)}</td><td>${escapeHtml(x.remarks||'')}</td><td>${actions}</td></tr>`}).join('');
 }
-async function completeReset(id){
-  const r=await fetch('/api/password-reset/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:id})});
-  const d=await r.json();
-  const m=document.getElementById('resetMsg');
-  if(d.ok){m.className='success';m.textContent='Temporary password: '+d.temporary_password+'  Share it with the user. This is shown once.';}else{m.className='error';m.textContent=d.error||'Reset failed';}
+async function completeReset(btn,id){
+  await withLoading(btn, async ()=>{
+    const r=await fetch('/api/password-reset/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:id})});
+    const d=await r.json();
+    const m=document.getElementById('resetMsg');
+    if(d.ok){m.className='success';m.textContent='Temporary password: '+d.temporary_password+'  Share it with the user. This is shown once.';}else{m.className='error';m.textContent=d.error||'Reset failed';}
+  });
   loadResetRequests();
 }
-async function rejectReset(id){await fetch('/api/password-reset/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:id})});loadResetRequests();}
-loadResetRequests();
-</script>
-
-<script id="v69-consistent-profile-nav">
-async function v69ConsistentProfileNav(){
-  try{
-    const r = await fetch('/api/me');
-    const d = await r.json();
-    const user = d.user || null;
-    if(!user) return;
-    const role = String(user.role || '').toLowerCase();
-
-    let nav = document.querySelector('header .nav') || document.querySelector('header div:last-child') || document.querySelector('header');
-    if(!nav) return;
-
-    function hasHref(href){ return !!document.querySelector('header a[href="' + href + '"]'); }
-    function addLink(href, text){
-      if(hasHref(href)) return;
-      const a = document.createElement('a');
-      a.href = href;
-      a.textContent = text;
-      a.style.color = 'white';
-      a.style.fontWeight = '700';
-      a.style.marginLeft = '14px';
-      nav.appendChild(a);
-    }
-
-    // Profile should be visible to every logged-in role.
-    addLink('/profile', 'Profile');
-
-    // Logout should also be consistently visible.
-    addLink('/logout', 'Logout');
-
-    // Normal users should not see governance/admin navigation.
-    if(role === 'user'){
-      document.querySelectorAll('header a[href="/users"], header a[href="/logs"], header a[href="/tasks"]').forEach(a => a.remove());
-    }
-
-    // Admin and Super Admin should have governance links available on main pages.
-    if(role === 'admin' || role === 'super admin'){
-      addLink('/users', 'Users');
-      addLink('/logs', 'Logs');
-      addLink('/tasks', 'Tasks');
-    }
-  }catch(e){
-    // Route-level permissions remain the security layer.
-  }
+async function rejectReset(btn,id){
+  await withLoading(btn, ()=>fetch('/api/password-reset/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:id})}));
+  loadResetRequests();
 }
-v69ConsistentProfileNav();
+loadResetRequests();
+renderNav();
 </script>
-
-
-<script id="v70-evaluation-nav">
-async function v70EvaluationNav(){try{const r=await fetch('/api/me');const d=await r.json();const role=((d.user&&d.user.role)||'').toLowerCase();if(role==='admin'||role==='super admin'){let nav=document.querySelector('header .nav')||document.querySelector('header div:last-child')||document.querySelector('header');if(nav&&!document.querySelector('header a[href="/evaluation"]')){const a=document.createElement('a');a.href='/evaluation';a.textContent='Evaluation';a.style.color='white';a.style.fontWeight='700';a.style.marginLeft='14px';nav.appendChild(a);}}}catch(e){}}
-v70EvaluationNav();
-</script>
-
 </body></html>

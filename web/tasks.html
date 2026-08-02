@@ -1,70 +1,13 @@
 <!doctype html><html><head><title>Task Tracker</title>
-<style>
-body{font-family:Arial,sans-serif;background:#f4f6fb;margin:0;color:#1f2937}header{background:#305496;color:white;padding:18px 28px;display:flex;justify-content:space-between}header a{color:white;font-weight:700;margin-left:14px}main{max-width:1100px;margin:0 auto;padding:20px}.card{background:white;border:1px solid #d9e2ef;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,23,42,.06);margin-bottom:16px}input,select,textarea{padding:10px;border:1px solid #d9e2ef;border-radius:9px;font:inherit;width:100%;box-sizing:border-box}label{display:flex;flex-direction:column;gap:6px;font-weight:700;margin:8px 0}button{background:#305496;color:white;border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}table{width:100%;border-collapse:collapse;background:white}th,td{border-bottom:1px solid #e5e7eb;text-align:left;padding:9px;font-size:14px;vertical-align:top}th{background:#eef2ff}.grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px}.danger{background:#991b1b}.muted{color:#64748b;font-size:13px}.nav a{color:white}</style>
+<link rel="stylesheet" href="/static/css/app.css">
 </head><body>
-<header><h2>Task Tracker</h2><div class="nav"><a href="/chat">Chat</a><a href="/logs">Logs</a><a href="/users">Users</a><a href="/profile">Profile</a><a href="/logout">Logout</a></div></header>
-<main><div class="card"><h3>Create Task</h3><div class="grid"><label>Title<input id="title"></label><label>Assigned To<input id="assigned_to"></label><label>Category<select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></label><label>Priority<select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></label><label>Status<select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></label><label>Due Date<input id="due_date"></label></div><label>Description<textarea id="description"></textarea></label><label>Remarks<textarea id="remarks"></textarea></label><button onclick="addTask()">Add Task</button></div><div class="card"><h3>Tasks</h3><table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Due</th><th>Remarks</th></tr></thead><tbody id="rows"></tbody></table></div></main>
+<header><h2>Task Tracker</h2><div id="nav"></div></header>
+<main><div class="card"><h3>Create Task</h3><div class="grid-2"><label>Title<input id="title"></label><label>Assigned To<input id="assigned_to"></label><label>Category<select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></label><label>Priority<select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></label><label>Status<select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></label><label>Due Date<input id="due_date"></label></div><label>Description<textarea id="description"></textarea></label><label>Remarks<textarea id="remarks"></textarea></label><button onclick="addTask()">Add Task</button></div><div class="card"><h3>Tasks</h3><table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Due</th><th>Remarks</th></tr></thead><tbody id="rows"></tbody></table></div></main>
+<script src="/static/js/nav.js"></script>
 <script>
-async function load(){const r=await fetch('/api/tasks');const d=await r.json();rows.innerHTML=(d.tasks||[]).map(t=>`<tr><td>${t.id}</td><td>${t.title}</td><td>${t.category}</td><td>${t.priority}</td><td>${t.status}</td><td>${t.assigned_to}</td><td>${t.created_by}</td><td>${t.due_date}</td><td>${t.remarks}</td></tr>`).join('')}
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function load(){const r=await fetch('/api/tasks');const d=await r.json();rows.innerHTML=(d.tasks||[]).map(t=>`<tr><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${escapeHtml(t.status)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.due_date)}</td><td>${escapeHtml(t.remarks)}</td></tr>`).join('')}
 async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:assigned_to.value,due_date:due_date.value,remarks:remarks.value})});load()}load();
+renderNav();
 </script>
-
-
-
-
-
-<script id="v69-consistent-profile-nav">
-async function v69ConsistentProfileNav(){
-  try{
-    const r = await fetch('/api/me');
-    const d = await r.json();
-    const user = d.user || null;
-    if(!user) return;
-    const role = String(user.role || '').toLowerCase();
-
-    let nav = document.querySelector('header .nav') || document.querySelector('header div:last-child') || document.querySelector('header');
-    if(!nav) return;
-
-    function hasHref(href){ return !!document.querySelector('header a[href="' + href + '"]'); }
-    function addLink(href, text){
-      if(hasHref(href)) return;
-      const a = document.createElement('a');
-      a.href = href;
-      a.textContent = text;
-      a.style.color = 'white';
-      a.style.fontWeight = '700';
-      a.style.marginLeft = '14px';
-      nav.appendChild(a);
-    }
-
-    // Profile should be visible to every logged-in role.
-    addLink('/profile', 'Profile');
-
-    // Logout should also be consistently visible.
-    addLink('/logout', 'Logout');
-
-    // Normal users should not see governance/admin navigation.
-    if(role === 'user'){
-      document.querySelectorAll('header a[href="/users"], header a[href="/logs"], header a[href="/tasks"]').forEach(a => a.remove());
-    }
-
-    // Admin and Super Admin should have governance links available on main pages.
-    if(role === 'admin' || role === 'super admin'){
-      addLink('/users', 'Users');
-      addLink('/logs', 'Logs');
-      addLink('/tasks', 'Tasks');
-    }
-  }catch(e){
-    // Route-level permissions remain the security layer.
-  }
-}
-v69ConsistentProfileNav();
-</script>
-
-
-<script id="v70-evaluation-nav">
-async function v70EvaluationNav(){try{const r=await fetch('/api/me');const d=await r.json();const role=((d.user&&d.user.role)||'').toLowerCase();if(role==='admin'||role==='super admin'){let nav=document.querySelector('header .nav')||document.querySelector('header div:last-child')||document.querySelector('header');if(nav&&!document.querySelector('header a[href="/evaluation"]')){const a=document.createElement('a');a.href='/evaluation';a.textContent='Evaluation';a.style.color='white';a.style.fontWeight='700';a.style.marginLeft='14px';nav.appendChild(a);}}}catch(e){}}
-v70EvaluationNav();
-</script>
-
 </body></html>

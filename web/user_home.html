@@ -25,7 +25,10 @@ async function loadMe(){
     document.getElementById('welcome').textContent = 'Welcome, ' + (u.name || 'User');
     document.getElementById('userEmail').textContent = u.email || '';
     document.getElementById('userRole').textContent = u.role || 'User';
-  }catch(e){}
+  }catch(e){
+    document.getElementById('welcome').textContent = 'Welcome';
+    document.getElementById('userEmail').textContent = 'Could not load your profile. Try refreshing the page.';
+  }
 }
 loadMe();
 </script>
