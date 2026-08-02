@@ -87,6 +87,13 @@ _PATH_FIELDS = {'source', 'workbook', 'output'}
 # whatever free-text span the LLM chose - see _recover_task_ref.
 _TASK_REF_COMMANDS = {'edit_task', 'update_task_status'}
 
+# Commands that take an 'intern' field, and so are candidates for the
+# possessive-name recovery in _recover_intern - see that method.
+_INTERN_NAME_COMMANDS = {
+    'extend_intern', 'edit_task', 'update_task_status', 'update_capstone',
+    'update_scenario', 'edit_project', 'update_project_status', 'apply_plan_to_intern',
+}
+
 @dataclass
 class ChatDraft:
     draft_id: str
@@ -551,7 +558,26 @@ class ChatService:
             self._recover_plan_name(text, args)
         if command in _TASK_REF_COMMANDS:
             self._recover_task_ref(text, args)
+        if command in _INTERN_NAME_COMMANDS:
+            self._recover_intern(text, args)
         return ChatDraft(str(uuid.uuid4()), command, args)
+
+    def _recover_intern(self, text: str, args: dict):
+        """Fill 'intern' via regex when the LLM dropped/ungrounded it.
+
+        Observed live: for "mark Sara's task on 2026-08-04 as
+        completed," the LLM path sometimes returns no usable intern
+        value at all (grounding check strips it), leaving the user
+        asked for a field their message already answered. Same
+        possessive-phrasing fallback as the pure-regex parser uses.
+        """
+        if args.get('intern'):
+            return
+        m = re.search(r'(?:intern|for|named|name)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
+        if not m:
+            m = re.search(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})'s\s+(?:task|project|scenario|capstone|main project)\b", text)
+        if m:
+            args['intern'] = m.group(1).strip()
 
     def _recover_task_ref(self, text: str, args: dict):
         """Prefer an actual date or task number over whatever free-text
@@ -663,16 +689,8 @@ class ChatService:
             if len(dates) >= 1: args['start_date'] = dates[0]
             if len(dates) >= 2: args['end_date'] = dates[1]
         if command in ['edit_task','update_task_status'] and dates: args['task_ref'] = dates[0]
-        m = re.search(r'(?:intern|for|named|name)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
-        if not m:
-            # Possessive phrasing: "mark Sara's task on ... as completed",
-            # "update Sara's project ..." - this doesn't match the pattern
-            # above (no "intern"/"for"/"named"/"name" keyword), so the
-            # intern's own name was previously lost entirely whenever the
-            # LLM path also failed/returned nothing for this phrasing.
-            m = re.search(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})'s\s+(?:task|project|scenario|capstone|main project)\b", text)
-        if m and command in ['extend_intern','edit_task','update_task_status','update_capstone','update_scenario','edit_project','update_project_status','apply_plan_to_intern']:
-            args['intern'] = m.group(1).strip()
+        if command in _INTERN_NAME_COMMANDS:
+            self._recover_intern(text, args)
         if command in ['add_intern_basic','add_intern_with_plan']:
             m2 = re.search(r'(?:named|name|intern)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
             if m2: args['name'] = m2.group(1).strip()
