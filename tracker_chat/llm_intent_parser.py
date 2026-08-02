@@ -70,8 +70,8 @@ Rules:
 - If the user asks to create/draft/build a plan, and detailed week generation is needed, let the existing plan-drafting layer handle it by returning command="__plan_draft__".
 - Normalize person names to title case, e.g. "shakeel" -> "Shakeel".
 - Normalize statuses to one of: Pending, In Progress, Completed.
-- Use ISO dates yyyy-mm-dd exactly when provided.
-- Do not invent dates, workbook filenames, or output filenames.
+- Always convert any date the user gives, in whatever format (e.g. "14th July 2026", "July 14 2026", "14/07/2026"), to ISO yyyy-mm-dd.
+- Do not invent dates that were not stated in some form by the user; only reformat ones that were. Do not invent workbook filenames or output filenames.
 - Omit unknown fields.
 - Return this shape:
 {{"command":"...", "args":{{...}}, "reply":"short user-facing summary"}}

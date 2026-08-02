@@ -8,6 +8,11 @@ import re
 import uuid
 from typing import Any
 
+try:
+    from dateutil import parser as _date_parser
+except Exception:
+    _date_parser = None
+
 from tracker_commands.executor import CommandExecutor
 from tracker_chat.intern_sheet_drafter import InternSheetDrafter, resolve_workbook_path
 from tracker_chat.llm_intent_parser import LLMIntentParser
@@ -87,11 +92,21 @@ _PATH_FIELDS = {'source', 'workbook', 'output'}
 # whatever free-text span the LLM chose - see _recover_task_ref.
 _TASK_REF_COMMANDS = {'edit_task', 'update_task_status'}
 
+# Date-valued fields. The groundedness check below requires a value to
+# appear verbatim in the user's own text, which blocks legitimate date
+# normalization: asked for "14th July 2026", the LLM correctly returning
+# "2026-07-14" would get rejected since that string never appears in the
+# input. These fields skip the literal-substring check in favor of an
+# ISO-format validity check instead - still rejects hallucinated garbage,
+# just not reformatted dates.
+_DATE_FIELDS = {'start_date', 'end_date', 'new_end', 'date', 'target_end', 'due_date', 'assigned_date'}
+
 # Commands that take an 'intern' field, and so are candidates for the
 # possessive-name recovery in _recover_intern - see that method.
 _INTERN_NAME_COMMANDS = {
-    'extend_intern', 'edit_task', 'update_task_status', 'update_capstone',
-    'update_scenario', 'edit_project', 'update_project_status', 'apply_plan_to_intern',
+    'extend_intern', 'extend_intern_with_plan', 'edit_task', 'update_task_status',
+    'update_capstone', 'update_scenario', 'edit_project', 'update_project_status',
+    'apply_plan_to_intern',
 }
 
 @dataclass
@@ -209,7 +224,10 @@ class ChatService:
                     continue
                 if k not in still_missing:
                     continue
-                if k not in _ENUM_FIELDS and isinstance(v, str) and not self._is_grounded(v, text):
+                if k in _DATE_FIELDS:
+                    if isinstance(v, str) and not self._is_valid_iso_date(v):
+                        continue
+                elif k not in _ENUM_FIELDS and isinstance(v, str) and not self._is_grounded(v, text):
                     continue
                 draft.args[k] = v
             self._force_enrich_ready_add_intern_with_plan(draft)
@@ -541,10 +559,17 @@ class ChatService:
         # came back with name="Shakeel", its own few-shot example name)
         # rather than just leaving the field for the user to be asked
         # about. Drop anything not actually traceable to the user's words.
-        args = {
-            k: v for k, v in raw_args.items()
-            if k not in _PATH_FIELDS and (k in _ENUM_FIELDS or not isinstance(v, str) or self._is_grounded(v, text))
-        }
+        def _keep(k, v):
+            if k in _PATH_FIELDS:
+                return False
+            if not isinstance(v, str):
+                return True
+            if k in _DATE_FIELDS:
+                return self._is_valid_iso_date(v)
+            if k in _ENUM_FIELDS:
+                return True
+            return self._is_grounded(v, text)
+        args = {k: v for k, v in raw_args.items() if _keep(k, v)}
         # Inject current workbook defaults. The LLM must not invent source/output paths.
         if current_workbook:
             if command == 'summary':
@@ -576,6 +601,11 @@ class ChatService:
         m = re.search(r'(?:intern|for|named|name)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})', text)
         if not m:
             m = re.search(r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})'s\s+(?:task|project|scenario|capstone|main project)\b", text)
+        if not m:
+            # "extend Sara to 5th September 2026" / "extend Sara's plan
+            # until ..." - name directly follows the action verb with no
+            # "intern"/"for"/"named" keyword and no possessive+noun match.
+            m = re.search(r'\b(?:extend|update|mark|edit)\b\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})\b', text)
         if m:
             args['intern'] = m.group(1).strip()
 
@@ -947,6 +977,15 @@ class ChatService:
         value = re.sub(r'\s+', ' ', value).strip()
         if not value or value.lower() in {'plan', 'learning', 'custom'}:
             return None
+        # The capturing regexes above have no reliable right-hand boundary
+        # for free-form sentences, so a trailing clause like "... plan for
+        # secops foundation but a bit different for adults" gets swallowed
+        # whole as if it were the name. A real plan name is a couple of
+        # words; past this length it's very likely runaway sentence text,
+        # so bail out and let the caller fall back to the LLM's own name
+        # instead of presenting a garbled multi-clause "name".
+        if len(value.split()) > 5:
+            return None
         compact = value.lower().replace(' ', '')
         aliases = {
             'aiengineering': 'AI Engineering Foundation',
@@ -1049,6 +1088,13 @@ class ChatService:
         if weeks:
             args['schedule_preview'] = weeks
 
+    def _is_valid_iso_date(self, value) -> bool:
+        try:
+            datetime.strptime(str(value).strip(), '%Y-%m-%d')
+            return True
+        except (TypeError, ValueError):
+            return False
+
     def _is_grounded(self, value, text: str) -> bool:
         """True if value plausibly came from the user's own words."""
         v = str(value).strip().lower()
@@ -1084,9 +1130,37 @@ class ChatService:
                 parts.append(p[:1].upper() + p[1:])
         return ' '.join(parts)
 
+    # Matches "14th July 2026", "July 14, 2026", "14 July 2026", etc. -
+    # deliberately requires an explicit 4-digit year and a real month name
+    # right next to a day number, rather than handing arbitrary substrings
+    # to dateutil, which would happily misparse unrelated text as a date.
+    _NATURAL_DATE_RE = re.compile(
+        r'\b(?:(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)|([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?)\s*,?\s+(\d{4})\b'
+    )
+
     def _first_date(self, text: str):
-        m = re.search(r'20\d{2}-\d{2}-\d{2}', text or '')
-        return m.group(0) if m else None
+        """Return the first date found in text, normalized to yyyy-mm-dd.
+
+        Understands both literal ISO dates and common natural-language
+        forms ("14th July 2026") - deterministic pre-check builders like
+        _extend_intern_draft run before the LLM ever sees the message, so
+        without this, any non-ISO date in "extend"/"capstone"/"scenario"
+        phrasing was silently dropped rather than parsed.
+        """
+        text = text or ''
+        m = re.search(r'20\d{2}-\d{2}-\d{2}', text)
+        if m:
+            return m.group(0)
+        if not _date_parser:
+            return None
+        m = self._NATURAL_DATE_RE.search(text)
+        if not m:
+            return None
+        try:
+            dt = _date_parser.parse(m.group(0), fuzzy=False)
+            return dt.strftime('%Y-%m-%d')
+        except (ValueError, OverflowError):
+            return None
 
     def _stamped_output(self, command: str) -> str:
         return f'{command}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx'
@@ -1126,9 +1200,14 @@ class ChatService:
         date = self._first_date(text)
         if date:
             args['new_end'] = date
-        m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
+        # Name capture is deliberately decoupled from the date's literal
+        # format (date itself is already resolved above via _first_date,
+        # which understands natural-language dates) - anchoring this on a
+        # literal ISO span here would silently drop the name whenever the
+        # date was written as "5th September 2026" instead.
+        m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\b', text, re.I)
         if not m:
-            m = re.search(r'(?:change|update|set)\s+(?:intern\s+)?(.+?)\s+(?:end date|new end)\s+(?:to|as)\s+20\d{2}-\d{2}-\d{2}', text, re.I)
+            m = re.search(r'(?:change|update|set)\s+(?:intern\s+)?(.+?)\s+(?:end date|new end)\s+(?:to|as)\b', text, re.I)
         if not m:
             # No date in this message at all (e.g. "extend intern Asad") -
             # still capture the name so the user isn't asked to repeat it.
@@ -1263,17 +1342,20 @@ class ChatService:
         # The word "plan" is optional because users often say "with SecOps Foundation".
         if 'extend' not in lower or 'with' not in lower:
             return None
-        date_m = re.search(r'20\d{2}-\d{2}-\d{2}', text)
-        if not date_m:
+        new_end = self._first_date(text)
+        if not new_end:
             return None
         args = {}
         if current_workbook:
             args['source'] = current_workbook
-        args['new_end'] = date_m.group(0)
+        args['new_end'] = new_end
 
         # Extend Habeeb to 2026-09-30 with Kubernetes Troubleshooting plan
-        # Extend Habeeb to 2026-09-30 with SecOps Foundation
-        m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+20\d{2}-\d{2}-\d{2}\s+with\s+(.+?)(?:\s+plan)?$', text, re.I)
+        # Extend Habeeb to 5th September 2026 with SecOps Foundation
+        # (name/plan capture doesn't anchor on the date's literal format -
+        # date is already resolved above via _first_date, which handles
+        # natural-language dates too.)
+        m = re.search(r'extend\s+(?:intern\s+)?(.+?)\s+(?:to|until)\s+.+?\s+with\s+(.+?)(?:\s+plan)?$', text, re.I)
         if m:
             args['intern'] = self._clean_name(m.group(1))
             plan = m.group(2).strip().strip(' .,:;')
