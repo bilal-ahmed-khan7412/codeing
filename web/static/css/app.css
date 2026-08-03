@@ -45,14 +45,6 @@ a { color: var(--color-accent); text-underline-offset: 3px; }
 .hr { height: 1px; border: 0; margin: var(--space-4) 0; background: var(--color-divider); }
 
 .blueprint { position: relative; border: 1px solid var(--color-divider); border-radius: 0; }
-.blueprint > .corner { position: absolute; width: 11px; height: 11px; color: color-mix(in srgb, var(--color-text) 55%, transparent); }
-.blueprint > .corner::before, .blueprint > .corner::after { content: ""; position: absolute; background: currentColor; }
-.blueprint > .corner::before { left: 5px; top: 0; width: 1px; height: 100%; }
-.blueprint > .corner::after { top: 5px; left: 0; width: 100%; height: 1px; }
-.blueprint > .corner.tl { top: -6px; left: -6px; }
-.blueprint > .corner.tr { top: -6px; right: -6px; }
-.blueprint > .corner.bl { bottom: -6px; left: -6px; }
-.blueprint > .corner.br { bottom: -6px; right: -6px; }
 
 /* — buttons — */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; text-decoration: none;
@@ -81,7 +73,7 @@ button:active { background: var(--color-accent-700); }
 button:disabled { opacity: .5; cursor: not-allowed; }
 button.danger { background: transparent; color: var(--color-accent-800); border-color: var(--color-accent-700); }
 button.danger:hover { background: color-mix(in srgb, var(--color-accent) 10%, transparent); }
-button.success { background: var(--color-accent-700); border-color: var(--color-accent-700); }
+button.success { background: var(--color-accent-700); color: var(--color-bg); border-color: var(--color-accent-700); }
 button.success:hover { background: var(--color-accent-800); }
 
 /* — forms — */
@@ -141,7 +133,15 @@ tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparen
 
 /* — auth split screen — */
 .authgrid { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
+/* justify-content: space-between divides the leftover vertical space
+   evenly between 3 children (title / tagline / spacer), which is what
+   originally put the tagline around 40% down with room to breathe both
+   above and below it - not flush at the very bottom. The 3rd child
+   used to be the "Industry theme" text; it's now an empty spacer
+   (.authside-spacer) so the same proportional spacing holds without
+   showing any text. */
 .authside { background: var(--color-accent-900); color: var(--color-bg); padding: 56px 48px; display: flex; flex-direction: column; justify-content: space-between; }
+.authside-brand { font-family: var(--font-heading); font-weight: 700; font-size: 30px; letter-spacing: -0.02em; }
 .authside h1 { color: var(--color-bg); font-size: 36px; line-height: 1.08; margin: 0 0 14px; }
 .authmain { display: flex; align-items: center; justify-content: center; background: var(--color-bg); padding: 24px; }
 .authcard { width: min(440px, 100%); padding: 34px 28px; }
@@ -157,3 +157,10 @@ tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparen
 .confirm-overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--color-neutral-900) 55%, transparent); display: flex; align-items: center; justify-content: center; z-index: 9999; }
 .confirm-box { background: var(--color-bg); border: 1px solid var(--color-divider); padding: 20px; max-width: 360px; box-shadow: var(--shadow-lg); }
 .confirm-actions { display: flex; gap: 8px; margin-top: 14px; justify-content: flex-end; }
+
+/* — secret reveal modal (temporary passwords, API-key-style) — */
+.secret-box { max-width: 460px; }
+.secret-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.secret-value { flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px;
+  background: color-mix(in srgb, var(--color-text) 6%, transparent); border: 1px solid var(--color-divider);
+  padding: 10px 12px; word-break: break-all; }

@@ -7,7 +7,7 @@
     <div class="kicker">Governance</div>
     <h2 style="margin:0 0 20px">User Management</h2>
     <div class="card blueprint elev-sm" style="padding:20px">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      
       <h3 style="margin:0 0 4px">Access Requests &amp; Users</h3>
       <p class="muted">Admins can approve and manage Users only. Super Admin can approve Users/Admins and manage Admins.</p>
       <p id="msg" class="muted" aria-live="polite"></p>
@@ -16,7 +16,7 @@
       </div>
     </div>
     <div class="card blueprint elev-sm" style="padding:20px">
-      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      
       <h3 style="margin:0 0 4px">Password Reset Requests</h3>
       <p class="muted">Admins can reset normal Users only. Super Admin can reset Admins and Users. Temporary passwords are shown once.</p>
       <p id="resetMsg" class="muted" aria-live="polite"></p>
@@ -69,7 +69,12 @@ async function completeReset(btn,id){
     const r=await fetch('/api/password-reset/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_id:id})});
     const d=await r.json();
     const m=document.getElementById('resetMsg');
-    if(d.ok){m.className='success';m.textContent='Temporary password: '+d.temporary_password+'  Share it with the user. This is shown once.';}else{m.className='error';m.textContent=d.error||'Reset failed';}
+    if(d.ok){
+      m.className='muted'; m.textContent='';
+      await showSecret('Temporary password', d.temporary_password, 'Share it with the user. This is shown once and cannot be retrieved again.');
+    }else{
+      m.className='error'; m.textContent=d.error||'Reset failed';
+    }
   });
   loadResetRequests();
 }

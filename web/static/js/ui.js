@@ -54,6 +54,59 @@ function confirmDialog(message) {
   });
 }
 
+function showSecret(title, value, note) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    const box = document.createElement('div');
+    box.className = 'confirm-box secret-box';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    h.style.margin = '0 0 8px';
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = note || 'Copy this now - it will not be shown again.';
+    const row = document.createElement('div');
+    row.className = 'secret-row';
+    const code = document.createElement('code');
+    code.className = 'secret-value';
+    code.textContent = value;
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn btn-secondary';
+    copyBtn.textContent = 'Copy';
+    row.appendChild(code);
+    row.appendChild(copyBtn);
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const close = document.createElement('button');
+    close.className = 'btn btn-primary';
+    close.textContent = 'Done';
+    actions.appendChild(close);
+    box.appendChild(h);
+    box.appendChild(p);
+    box.appendChild(row);
+    box.appendChild(actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    close.focus();
+    function finish() {
+      overlay.remove();
+      resolve();
+    }
+    copyBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(value);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+      } catch (e) {
+        toast('Could not copy automatically - select and copy manually.', 'error');
+      }
+    };
+    close.onclick = finish;
+    overlay.onclick = (e) => { if (e.target === overlay) finish(); };
+  });
+}
+
 async function withLoading(btn, fn) {
   if (!btn) return fn();
   const original = btn.textContent;
