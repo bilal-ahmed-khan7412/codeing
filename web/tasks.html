@@ -11,11 +11,11 @@
       <h3 style="margin:0 0 10px">Create Ticket</h3>
       <div class="grid-2">
         <div class="field"><label>Title</label><input id="title"></div>
-        <div class="field"><label>Assigned To</label><input id="assigned_to"></div>
+        <div class="field"><label>Assigned To</label><select id="assigned_to"><option value="">Unassigned</option></select></div>
         <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></div>
         <div class="field"><label>Priority</label><select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
         <div class="field"><label>Status</label><select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></div>
-        <div class="field"><label>Due Date</label><input id="due_date"></div>
+        <div class="field"><label>Due Date</label><input type="date" id="due_date"></div>
       </div>
       <div class="field"><label>Description</label><textarea id="description"></textarea></div>
       <div class="field"><label>Remarks</label><textarea id="remarks"></textarea></div>
@@ -32,7 +32,16 @@
 <script>
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 async function load(){const r=await fetch('/api/tasks');const d=await r.json();rows.innerHTML=(d.tasks||[]).map(t=>`<tr><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${escapeHtml(t.status)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.due_date)}</td><td>${escapeHtml(t.remarks)}</td></tr>`).join('')}
+async function loadAssignees(){
+  try{
+    const r=await fetch('/api/users');
+    const d=await r.json();
+    const users=(d.users||[]).filter(u=>u.status==='Active');
+    assigned_to.innerHTML='<option value="">Unassigned</option>'+users.map(u=>`<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`).join('');
+  }catch(e){}
+}
 async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:assigned_to.value,due_date:due_date.value,remarks:remarks.value})});load()}load();
+loadAssignees();
 renderNav();
 </script>
 </body></html>
