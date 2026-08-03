@@ -387,7 +387,9 @@ class PlanService:
         sheet = ''.join('_' if ch in bad else ch for ch in name)[:31]
         return sheet or 'Plan'
 
-    def extend_intern_with_plan(self, source_path: str, intern_name: str, new_end: str, plan_name: str, output_path: str | None = None, update_main_project: bool = True):
+    def extend_intern_with_plan(self, source_path: str, intern_name: str, new_end: str, plan_name: str, output_path: str | None = None, update_main_project: bool = True,
+                                 schedule_preview: list | None = None, main_title: str = '', objective: str = '', tech_stack: str = '',
+                                 scenario_text: str = '', skills: str = '', deliverable: str = ''):
         """Extend an intern's end date, drafting the extension period's content from a selected plan."""
         intern_name = (intern_name or '').strip()
         plan_name = (plan_name or '').strip()
@@ -417,12 +419,22 @@ class PlanService:
         while extension_start.weekday() >= 5:
             extension_start += timedelta(days=1)
 
-        # Draft only the extension period. The drafter uses the selected plan as context.
-        drafter = InternSheetDrafter()
-        draft = drafter.draft(source_path, intern_name, extension_start.strftime('%Y-%m-%d'), new_end_dt.strftime('%Y-%m-%d'), plan_name)
-        weeks = draft.get('weeks') or []
-        main = draft.get('main_project') or {}
-        scenario = draft.get('scenario') or {}
+        # If the caller already has a (possibly user-edited) schedule preview
+        # - i.e. this is a chat/Forms approval where the preview shown to the
+        # user was built once already - use it as-is instead of drafting
+        # again, so an edit to the daily tasks actually takes effect. Without
+        # this, extension_schedule_preview was always regenerated fresh at
+        # approval time and any edit to it was silently discarded.
+        if schedule_preview:
+            weeks = schedule_preview
+            main = {'title': main_title, 'objective': objective, 'tech_stack': tech_stack} if (main_title or objective or tech_stack) else {}
+            scenario = {'scenario': scenario_text, 'skills': skills, 'deliverable': deliverable} if (scenario_text or skills or deliverable) else {}
+        else:
+            drafter = InternSheetDrafter()
+            draft = drafter.draft(source_path, intern_name, extension_start.strftime('%Y-%m-%d'), new_end_dt.strftime('%Y-%m-%d'), plan_name)
+            weeks = draft.get('weeks') or []
+            main = draft.get('main_project') or {}
+            scenario = draft.get('scenario') or {}
 
         # Existing week/project numbering continuity.
         existing_weeks = []

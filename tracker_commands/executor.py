@@ -26,6 +26,13 @@ class CommandExecutor:
                 args["plan_name"],
                 args.get("output"),
                 bool(args.get("update_main_project", True)),
+                args.get("extension_schedule_preview"),
+                args.get("extension_main_title", ""),
+                args.get("extension_objective", ""),
+                args.get("extension_tech_stack", ""),
+                args.get("extension_scenario", ""),
+                args.get("extension_skills", ""),
+                args.get("extension_deliverable", ""),
             )
         if command == "create_workbook":
             return self.workbook_service.create_fresh_workbook(args["output"])

@@ -119,7 +119,7 @@ class UserService:
 
     def get_user_by_id(self, user_id: int):
         conn = get_conn()
-        row = conn.execute('SELECT id,name,email,department,role,status,created_at,last_login,last_logout FROM users WHERE id=?', (user_id,)).fetchone()
+        row = conn.execute('SELECT id,name,email,department,role,status,created_at,last_login,last_logout,auto_cleanup_versions FROM users WHERE id=?', (user_id,)).fetchone()
         conn.close()
         return dict(row) if row else None
 
@@ -206,6 +206,10 @@ class UserService:
             fields.append('department=?'); values.append(data['department'].strip())
         if data.get('password'):
             fields.append('password=?'); values.append(hash_password(data['password']))
+        # Presence check, not truthiness - this is a boolean toggle, and a
+        # truthy-only check would make it impossible to ever turn back off.
+        if 'auto_cleanup_versions' in data:
+            fields.append('auto_cleanup_versions=?'); values.append(1 if data['auto_cleanup_versions'] else 0)
         if not fields:
             return
         values.append(current_email)

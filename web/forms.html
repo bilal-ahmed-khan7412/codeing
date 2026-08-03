@@ -1,0 +1,830 @@
+<!doctype html><html><head><title>Forms</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head><body>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="kicker">Assistant</div>
+    <h2 style="margin:0 0 20px">Forms</h2>
+
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <h3 style="margin:0 0 10px">Workbook</h3>
+      <div class="field">
+        <label>Current workbook</label>
+        <select id="fileSelect" onchange="onWorkbookChange()"><option value="">Loading files...</option></select>
+      </div>
+      <div class="field">
+        <label>Or upload a new one</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input id="uploadFile" type="file" accept=".xlsx" style="flex:1">
+          <button class="btn btn-secondary" type="button" onclick="uploadWorkbook()">Upload &amp; Select</button>
+        </div>
+        <p id="uploadStatus" class="muted" aria-live="polite" style="margin-top:6px"></p>
+      </div>
+      <button class="btn btn-secondary" type="button" onclick="openFileManager()" style="margin-top:6px">Manage Files</button>
+    </div>
+
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <h3 style="margin:0 0 10px">Choose an action</h3>
+      <div class="grid-4" id="commandPicker">
+        <button class="btn btn-secondary" onclick="pickCommand('add_intern_with_plan')">Add Intern</button>
+        <button class="btn btn-secondary" onclick="pickCommand('extend_intern_with_plan')">Extend Intern</button>
+        <button class="btn btn-secondary" onclick="pickCommand('update_task_status')">Update Task Status</button>
+        <button class="btn btn-secondary" onclick="pickCommand('add_holiday')">Add Holiday</button>
+        <button class="btn btn-secondary" onclick="pickCommand('create_plan_from_draft')">Create Plan</button>
+        <button class="btn btn-secondary" onclick="pickCommand('edit_task')">Edit Task</button>
+        <button class="btn btn-secondary" onclick="pickCommand('update_capstone')">Update Main Project</button>
+        <button class="btn btn-secondary" onclick="pickCommand('update_scenario')">Update Scenario</button>
+        <button class="btn btn-secondary" onclick="pickCommand('summary')">View Summary</button>
+        <button class="btn btn-secondary" onclick="pickCommand('create_workbook')">Create Fresh Workbook</button>
+      </div>
+    </div>
+
+    <div class="card blueprint elev-sm" style="padding:20px;display:none" id="formCard">
+      <h3 style="margin:0 0 4px" id="formTitle"></h3>
+      <p class="muted" id="formNote"></p>
+      <p class="muted"><span class="required-mark">*</span> required</p>
+
+      <div id="form_add_intern_with_plan" style="display:none">
+        <div class="grid-2">
+          <div class="field"><label>Name <span class="required-mark">*</span></label><input id="ai_name"></div>
+          <div class="field"><label>Plan name <span class="required-mark">*</span></label><select id="ai_plan_name"><option value="">Select workbook first...</option></select></div>
+          <div class="field"><label>Start date <span class="required-mark">*</span></label><input type="date" id="ai_start_date"></div>
+          <div class="field"><label>End date <span class="required-mark">*</span></label><input type="date" id="ai_end_date"></div>
+          <div class="field"><label>Manager (optional)</label><input id="ai_manager"></div>
+        </div>
+      </div>
+
+      <div id="form_extend_intern_with_plan" style="display:none">
+        <div class="grid-2">
+          <div class="field"><label>Intern <span class="required-mark">*</span></label><select id="ei_intern" onchange="onExtendInternChange()"><option value="">Select workbook first...</option></select></div>
+          <div class="field"><label>New end date <span class="required-mark">*</span></label><input type="date" id="ei_new_end"></div>
+          <div class="field"><label>Plan name <span class="required-mark">*</span> <span class="muted">(unless "no plan" below)</span></label><select id="ei_plan_name"><option value="">Select workbook first...</option></select></div>
+        </div>
+        <div class="field"><label><input type="checkbox" id="ei_no_plan" style="width:auto;min-height:auto;display:inline-block;margin-right:6px" onchange="onNoPlanToggle()"> Extend without a plan</label></div>
+      </div>
+
+      <div id="form_update_task_status" style="display:none">
+        <div class="grid-2">
+          <div class="field"><label>Intern <span class="required-mark">*</span></label><select id="ut_intern" onchange="onTaskInternChange()"><option value="">Select workbook first...</option></select></div>
+          <div class="field"><label>Task <span class="required-mark">*</span></label><select id="ut_task"><option value="">Select intern first...</option></select></div>
+          <div class="field"><label>New status <span class="required-mark">*</span></label><select id="ut_status"><option>Pending</option><option>In Progress</option><option selected>Completed</option></select></div>
+        </div>
+      </div>
+
+      <div id="form_add_holiday" style="display:none">
+        <div class="grid-2">
+          <div class="field"><label>Holiday name <span class="required-mark">*</span></label><input id="ah_name" placeholder="e.g. Independence Day"></div>
+          <div class="field"><label>Date <span class="required-mark">*</span></label><input type="date" id="ah_date"></div>
+          <div class="field"><label>Scope</label><select id="ah_scope" onchange="onHolidayScopeChange()"><option value="global">All interns</option><option value="intern">Specific intern</option></select></div>
+          <div class="field" id="ah_intern_field" style="display:none"><label>Intern <span class="required-mark">*</span></label><select id="ah_intern"><option value="">Select workbook first...</option></select></div>
+        </div>
+      </div>
+
+      <div id="form_create_plan_from_draft" style="display:none">
+        <div class="grid-2">
+          <div class="field"><label>Plan name <span class="required-mark">*</span></label><input id="cp_plan_name" placeholder="e.g. Kubernetes Foundation"></div>
+          <div class="field"><label>Number of weeks</label><input type="number" id="cp_weeks_count" min="1" max="26" placeholder="8"></div>
+        </div>
+        <div class="field"><label>Description (optional)</label><input id="cp_description" placeholder="Any extra detail to guide the plan's content"></div>
+        <p class="muted">Leave the weeks below empty and the content will be generated automatically from the plan name/description. Add weeks manually only if you want full control over the content yourself.</p>
+        <div id="cp_weeks"></div>
+        <button class="btn btn-secondary" type="button" onclick="addWeekRow()" style="margin-top:6px">+ Add Week Manually</button>
+      </div>
+
+      <div id="form_edit_task" style="display:none">
+        <div class="grid-2">
+          <div class="field"><label>Intern <span class="required-mark">*</span></label><select id="et_intern" onchange="onEditTaskInternChange()"><option value="">Select workbook first...</option></select></div>
+          <div class="field"><label>Task <span class="required-mark">*</span></label><select id="et_task"><option value="">Select intern first...</option></select></div>
+        </div>
+        <p class="muted">Everything below is optional - leave a field blank to leave it unchanged.</p>
+        <div class="grid-2">
+          <div class="field"><label>Theme</label><input id="et_theme"></div>
+          <div class="field"><label>Task description</label><input id="et_task_desc"></div>
+          <div class="field"><label>Status</label><select id="et_status"><option value="">(unchanged)</option><option>Pending</option><option>In Progress</option><option>Completed</option></select></div>
+          <div class="field"><label>Remarks</label><input id="et_remarks"></div>
+        </div>
+      </div>
+
+      <div id="form_update_capstone" style="display:none">
+        <div class="field"><label>Intern <span class="required-mark">*</span></label><select id="uc_intern"><option value="">Select workbook first...</option></select></div>
+        <p class="muted">Everything below is optional - leave a field blank to leave it unchanged.</p>
+        <div class="grid-2">
+          <div class="field"><label>Title</label><input id="uc_title"></div>
+          <div class="field"><label>Objective</label><input id="uc_objective"></div>
+          <div class="field"><label>Tech stack</label><input id="uc_tech_stack"></div>
+          <div class="field"><label>Status</label><select id="uc_status"><option value="">(unchanged)</option><option>Pending</option><option>In Progress</option><option>Completed</option></select></div>
+          <div class="field"><label>Target end date</label><input type="date" id="uc_target_end"></div>
+        </div>
+      </div>
+
+      <div id="form_update_scenario" style="display:none">
+        <div class="field"><label>Intern <span class="required-mark">*</span></label><select id="us_intern"><option value="">Select workbook first...</option></select></div>
+        <p class="muted">Everything below is optional - leave a field blank to leave it unchanged.</p>
+        <div class="grid-2">
+          <div class="field"><label>Scenario</label><input id="us_scenario"></div>
+          <div class="field"><label>Skills</label><input id="us_skills"></div>
+          <div class="field"><label>Deliverable</label><input id="us_deliverable"></div>
+          <div class="field"><label>Status</label><select id="us_status"><option value="">(unchanged)</option><option>Pending</option><option>In Progress</option><option>Completed</option></select></div>
+          <div class="field"><label>Due date</label><input type="date" id="us_due_date"></div>
+        </div>
+      </div>
+
+      <div id="form_summary" style="display:none">
+        <div class="field"><label>Intern (leave blank for all interns)</label><select id="sm_intern"><option value="">All interns</option></select></div>
+      </div>
+
+      <div id="form_create_workbook" style="display:none">
+        <p class="muted">This creates a new, blank intern tracker workbook - no fields needed. It will be auto-selected as your current workbook once approved.</p>
+      </div>
+
+      <div class="proposal-actions" style="margin-top:16px">
+        <button class="success" onclick="submitForm()">Submit</button>
+        <button class="danger" onclick="resetForm()">Cancel</button>
+      </div>
+    </div>
+
+    <div class="card blueprint elev-sm" style="padding:20px;display:none" id="previewCard">
+      <h3 style="margin:0 0 4px" id="previewTitle"></h3>
+      <p id="previewMessage" class="muted" aria-live="polite"></p>
+      <table><tbody id="previewRows"></tbody></table>
+      <div id="previewSchedule"></div>
+      <div class="proposal-actions" style="margin-top:16px" id="previewActions"></div>
+    </div>
+
+  </main>
+</div>
+<script src="/static/js/nav.js"></script>
+<script src="/static/js/ui.js"></script>
+<script>
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// — workbook selection (same localStorage key/convention as chat.html, so a
+// workbook picked in one page carries over to the other) —
+function currentWorkbook(){ return localStorage.getItem('currentWorkbook') || ''; }
+function setCurrentWorkbook(name){ if(name) localStorage.setItem('currentWorkbook', name); }
+async function refreshFiles(){
+  const sel=document.getElementById('fileSelect');
+  sel.innerHTML='<option value="">Loading files...</option>';
+  try{
+    const res=await fetch('/api/files');
+    const data=await res.json();
+    const all=[...(data.outputs||[]).map(x=>({name:x.name, group:'outputs'})), ...(data.uploads||[]).map(x=>({name:x.name, group:'uploads'}))];
+    sel.innerHTML='<option value="">Select workbook...</option>' + all.map(x=>`<option value="${escapeHtml(x.name)}">${escapeHtml(x.group + ' / ' + x.name)}</option>`).join('');
+    const cw=currentWorkbook(); if(cw) sel.value=cw;
+  }catch(e){ sel.innerHTML='<option value="">Could not load files</option>'; }
+}
+
+// File manager modal - kept out of the main page (it's a rarely-needed
+// action), reusing the same overlay pattern as confirmDialog/showSecret.
+async function openFileManager(){
+  const overlay = document.createElement('div');
+  overlay.className = 'confirm-overlay';
+  const box = document.createElement('div');
+  box.className = 'confirm-box';
+  box.style.maxWidth = '520px';
+  box.style.width = '90%';
+  box.style.maxHeight = '70vh';
+  box.style.overflowY = 'auto';
+  box.innerHTML = `<h3 style="margin:0 0 8px">Your files</h3><div id="fileManagerList" class="muted">Loading...</div>
+    <div class="confirm-actions"><button onclick="this.closest('.confirm-overlay').remove()">Close</button></div>`;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  await refreshFileManagerList();
+}
+let fileManagerRows = [];
+async function refreshFileManagerList(){
+  const box = document.getElementById('fileManagerList');
+  if(!box) return;
+  try{
+    const res = await fetch('/api/files');
+    const data = await res.json();
+    // Pass an index into the onclick, not the raw name - embedding a
+    // filename (which can contain quotes/spaces/anything) inside an HTML
+    // attribute that's itself inside a JS template literal is exactly
+    // the kind of nested-quoting bug that broke the button before
+    // (JSON.stringify's double quotes closed the onclick="..." attribute
+    // early). An index sidesteps escaping entirely.
+    fileManagerRows = [...(data.uploads||[]).map(x=>({...x, folder:'uploads'})), ...(data.outputs||[]).map(x=>({...x, folder:'outputs'}))];
+    box.innerHTML = fileManagerRows.length ? fileManagerRows.map((x,i) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:4px 0">
+        <span style="font-size:13px">${escapeHtml(x.folder + ' / ' + x.name)}</span>
+        <button class="btn btn-danger" style="padding:5px 10px;font-size:12px" onclick="deleteMyFileAt(${i})">Delete</button>
+      </div>`).join('') : 'No files yet.';
+  }catch(e){ box.textContent = 'Could not load files.'; }
+}
+async function deleteMyFileAt(index){
+  const row = fileManagerRows[index];
+  if(!row) return;
+  await deleteMyFile(row.folder, row.name);
+}
+async function deleteMyFile(folder, name){
+  if(!await confirmDialog(`Delete ${name}? This cannot be undone.`)) return;
+  const res = await fetch('/api/files/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({folder, name})});
+  const data = await res.json();
+  if(!data.ok){ toast(data.error || 'Delete failed.', 'error'); return; }
+  toast('Deleted.', 'success');
+  if(currentWorkbook() === name){ localStorage.removeItem('currentWorkbook'); }
+  await refreshFiles();
+  await refreshFileManagerList();
+}
+function onWorkbookChange(){
+  setCurrentWorkbook(document.getElementById('fileSelect').value);
+  loadInternDropdowns();
+}
+async function uploadWorkbook(){
+  const f=document.getElementById('uploadFile').files[0];
+  const status=document.getElementById('uploadStatus');
+  if(!f){ status.textContent='Choose a .xlsx file first.'; return; }
+  status.textContent='Uploading...';
+  const fd=new FormData(); fd.append('file', f);
+  const res=await fetch('/api/upload',{method:'POST', body:fd});
+  const data=await res.json();
+  if(data.ok){
+    status.textContent=`Uploaded and selected: ${data.filename}`;
+    await refreshFiles();
+    setCurrentWorkbook(data.filename);
+    document.getElementById('fileSelect').value = data.filename;
+    await loadInternDropdowns();
+  } else {
+    status.textContent = data.error || 'Upload failed.';
+  }
+}
+
+// — intern/task dropdowns, populated from the selected workbook —
+function basename(path){ return (path || '').split(/[\\/]/).pop(); }
+async function fetchInterns(sourceOverride){
+  // sourceOverride lets Edit fetch against the workbook the draft was
+  // actually built against, not whatever the global "current workbook"
+  // selector has since become (it auto-switches after every approval -
+  // editing an older pending draft after approving something else would
+  // otherwise silently query the wrong file and match nothing).
+  const source=sourceOverride || currentWorkbook();
+  if(!source) return [];
+  try{
+    const r=await fetch('/api/workbook/interns?source='+encodeURIComponent(source));
+    const d=await r.json();
+    return d.ok ? (d.interns||[]) : [];
+  }catch(e){ return []; }
+}
+function fillInternSelect(sel, interns){
+  sel.innerHTML = '<option value="">Select intern...</option>' + interns.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+}
+async function fetchPlans(sourceOverride){
+  const source=sourceOverride || currentWorkbook();
+  if(!source) return [];
+  try{
+    const r=await fetch('/api/workbook/plans?source='+encodeURIComponent(source));
+    const d=await r.json();
+    return d.ok ? (d.plans||[]) : [];
+  }catch(e){ return []; }
+}
+function fillPlanSelect(sel, plans){
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select plan...</option>' + plans.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  if(plans.includes(current)) sel.value = current;
+}
+async function loadInternDropdowns(sourceOverride){
+  const interns = await fetchInterns(sourceOverride);
+  ['ei_intern','ut_intern','ah_intern','et_intern','uc_intern','us_intern'].forEach(id=>{
+    const sel=document.getElementById(id);
+    if(sel) fillInternSelect(sel, interns);
+  });
+  const smIntern=document.getElementById('sm_intern');
+  if(smIntern) smIntern.innerHTML = '<option value="">All interns</option>' + interns.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  ['ut_task','et_task'].forEach(id=>{
+    const sel=document.getElementById(id);
+    if(sel) sel.innerHTML='<option value="">Select intern first...</option>';
+  });
+  const plans = await fetchPlans(sourceOverride);
+  ['ai_plan_name','ei_plan_name'].forEach(id=>{
+    const sel=document.getElementById(id);
+    if(sel) fillPlanSelect(sel, plans);
+  });
+}
+async function loadTasksInto(internSelectId, taskSelectId){
+  const intern=document.getElementById(internSelectId).value;
+  const sel=document.getElementById(taskSelectId);
+  sel.innerHTML='<option value="">Loading tasks...</option>';
+  if(!intern){ sel.innerHTML='<option value="">Select intern first...</option>'; return; }
+  try{
+    const r=await fetch('/api/workbook/tasks?source='+encodeURIComponent(currentWorkbook())+'&intern='+encodeURIComponent(intern));
+    const d=await r.json();
+    const tasks=d.ok ? (d.tasks||[]) : [];
+    sel.innerHTML = tasks.length
+      ? tasks.map(t=>`<option value="${escapeHtml(t.date)}">${escapeHtml(t.date)} - ${escapeHtml(t.theme||'')} (${escapeHtml(t.status||'')})</option>`).join('')
+      : '<option value="">No tasks found</option>';
+  }catch(e){ sel.innerHTML='<option value="">Could not load tasks</option>'; }
+}
+function onTaskInternChange(){ loadTasksInto('ut_intern','ut_task'); }
+function onEditTaskInternChange(){ loadTasksInto('et_intern','et_task'); }
+function onExtendInternChange(){ /* intern chosen; nothing else needed */ }
+
+function onNoPlanToggle(){
+  const noPlan=document.getElementById('ei_no_plan').checked;
+  document.getElementById('ei_plan_name').disabled = noPlan;
+  if(noPlan) document.getElementById('ei_plan_name').value='';
+}
+function onHolidayScopeChange(){
+  const specific = document.getElementById('ah_scope').value === 'intern';
+  document.getElementById('ah_intern_field').style.display = specific ? 'block' : 'none';
+}
+
+// — create-plan repeatable week rows —
+let weekCount = 0;
+function addWeekRow(prefill){
+  weekCount++;
+  const n = weekCount;
+  const w = prefill || {};
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.style.margin = '10px 0';
+  div.style.padding = '12px';
+  div.dataset.week = n;
+  div.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <strong>Week ${n}</strong>
+      <button type="button" class="danger" onclick="this.closest('[data-week]').remove()">Remove</button>
+    </div>
+    <div class="grid-2" style="margin-top:6px">
+      <div class="field"><label>Theme</label><input class="wk-theme" value="${escapeHtml(w.theme || '')}"></div>
+      <div class="field"><label>Task</label><input class="wk-task" value="${escapeHtml(w.task || '')}"></div>
+      <div class="field"><label>Weekly project</label><input class="wk-project" value="${escapeHtml(w.weekly_project || '')}"></div>
+      <div class="field"><label>Notes</label><input class="wk-notes" value="${escapeHtml(w.notes || '')}"></div>
+    </div>`;
+  document.getElementById('cp_weeks').appendChild(div);
+}
+
+// — command picker / form switching —
+const COMMAND_TITLES = {
+  add_intern_with_plan: 'Add Intern',
+  extend_intern_with_plan: 'Extend Intern',
+  update_task_status: 'Update Task Status',
+  add_holiday: 'Add Holiday',
+  create_plan_from_draft: 'Create Plan',
+  edit_task: 'Edit Task',
+  update_capstone: 'Update Main Project',
+  update_scenario: 'Update Scenario',
+  summary: 'Progress Summary',
+  create_workbook: 'Create Fresh Workbook',
+};
+let activeCommand = null;
+function pickCommand(cmd, sourceOverride){
+  activeCommand = cmd;
+  document.getElementById('formCard').style.display = 'block';
+  document.getElementById('previewCard').style.display = 'none';
+  document.getElementById('formTitle').textContent = COMMAND_TITLES[cmd];
+  document.getElementById('formNote').textContent = cmd === 'create_workbook'
+    ? 'No workbook needed for this action.'
+    : (currentWorkbook() ? ('Workbook: ' + currentWorkbook()) : 'No workbook selected - pick one above first.');
+  Object.keys(COMMAND_TITLES).forEach(c => {
+    document.getElementById('form_' + c).style.display = (c === cmd) ? 'block' : 'none';
+  });
+  // Extend Intern's "no plan" checkbox/disabled-select state is left over
+  // from whatever the form was used for last, since setFieldValue() only
+  // overwrites plain input values, not this kind of stateful toggle -
+  // reset it every time the form is (re)shown, whether fresh or via Edit.
+  if(cmd === 'extend_intern_with_plan'){
+    const noPlanBox = document.getElementById('ei_no_plan');
+    noPlanBox.checked = false;
+    document.getElementById('ei_plan_name').disabled = false;
+  }
+  if(['extend_intern_with_plan','update_task_status','add_holiday','add_intern_with_plan','edit_task','update_capstone','update_scenario','summary'].includes(cmd)){
+    // Return the promise so editDraft() can await this exact call instead
+    // of starting a second, separate one - two concurrent calls each
+    // rebuild the <select> options from scratch, and whichever resolves
+    // last wins, silently wiping out a value populateForm() already set.
+    return loadInternDropdowns(sourceOverride);
+  }
+  return Promise.resolve();
+}
+function resetForm(){
+  document.getElementById('formCard').style.display = 'none';
+  activeCommand = null;
+  editingDraftId = null;
+}
+
+function collectArgs(cmd){
+  if(cmd === 'add_intern_with_plan'){
+    return {
+      name: document.getElementById('ai_name').value.trim(),
+      start_date: document.getElementById('ai_start_date').value,
+      end_date: document.getElementById('ai_end_date').value,
+      plan_name: document.getElementById('ai_plan_name').value.trim(),
+      manager: document.getElementById('ai_manager').value.trim() || undefined,
+    };
+  }
+  if(cmd === 'extend_intern_with_plan'){
+    const noPlan = document.getElementById('ei_no_plan').checked;
+    return {
+      intern: document.getElementById('ei_intern').value,
+      new_end: document.getElementById('ei_new_end').value,
+      plan_name: noPlan ? undefined : document.getElementById('ei_plan_name').value.trim(),
+    };
+  }
+  if(cmd === 'update_task_status'){
+    return {
+      intern: document.getElementById('ut_intern').value,
+      task_ref: document.getElementById('ut_task').value,
+      status: document.getElementById('ut_status').value,
+    };
+  }
+  if(cmd === 'add_holiday'){
+    const scope = document.getElementById('ah_scope').value;
+    return {
+      name: document.getElementById('ah_name').value.trim(),
+      date: document.getElementById('ah_date').value,
+      scope: scope,
+      intern_name: scope === 'intern' ? document.getElementById('ah_intern').value : undefined,
+    };
+  }
+  if(cmd === 'create_plan_from_draft'){
+    // Weeks left empty (no rows added) means "generate automatically" -
+    // the backend routes that case through the same LLM plan-drafting
+    // the chatbot uses instead of creating a plan with no content.
+    const weeks = [...document.querySelectorAll('#cp_weeks [data-week]')].map(row => ({
+      week: Number(row.dataset.week),
+      theme: row.querySelector('.wk-theme').value.trim(),
+      task: row.querySelector('.wk-task').value.trim(),
+      weekly_project: row.querySelector('.wk-project').value.trim(),
+      notes: row.querySelector('.wk-notes').value.trim(),
+    }));
+    return {
+      plan_name: document.getElementById('cp_plan_name').value.trim(),
+      description: document.getElementById('cp_description').value.trim() || undefined,
+      weeks_count: Number(document.getElementById('cp_weeks_count').value) || undefined,
+      weeks: weeks.length ? weeks : undefined,
+    };
+  }
+  if(cmd === 'edit_task'){
+    return {
+      intern: document.getElementById('et_intern').value,
+      task_ref: document.getElementById('et_task').value,
+      theme: document.getElementById('et_theme').value.trim() || undefined,
+      task: document.getElementById('et_task_desc').value.trim() || undefined,
+      status: document.getElementById('et_status').value || undefined,
+      remarks: document.getElementById('et_remarks').value.trim() || undefined,
+    };
+  }
+  if(cmd === 'update_capstone'){
+    return {
+      intern: document.getElementById('uc_intern').value,
+      title: document.getElementById('uc_title').value.trim() || undefined,
+      objective: document.getElementById('uc_objective').value.trim() || undefined,
+      tech_stack: document.getElementById('uc_tech_stack').value.trim() || undefined,
+      status: document.getElementById('uc_status').value || undefined,
+      target_end: document.getElementById('uc_target_end').value || undefined,
+    };
+  }
+  if(cmd === 'update_scenario'){
+    return {
+      intern: document.getElementById('us_intern').value,
+      scenario: document.getElementById('us_scenario').value.trim() || undefined,
+      skills: document.getElementById('us_skills').value.trim() || undefined,
+      deliverable: document.getElementById('us_deliverable').value.trim() || undefined,
+      status: document.getElementById('us_status').value || undefined,
+      due_date: document.getElementById('us_due_date').value || undefined,
+    };
+  }
+  if(cmd === 'summary'){
+    return {
+      intern: document.getElementById('sm_intern').value || undefined,
+    };
+  }
+  return {};
+}
+
+async function submitForm(){
+  if(!activeCommand) return;
+  if(activeCommand !== 'create_workbook' && !currentWorkbook()){ toast('Select a workbook first.', 'error'); return; }
+  // "Extend without a plan" needs the command itself to switch from
+  // extend_intern_with_plan to extend_intern (plan_name isn't just
+  // optional - extend_intern_with_plan requires it), not merely omit
+  // plan_name from the same command.
+  let effectiveCommand = activeCommand;
+  if(activeCommand === 'extend_intern_with_plan' && document.getElementById('ei_no_plan').checked){
+    effectiveCommand = 'extend_intern';
+  }
+  const args = collectArgs(activeCommand);
+  let res;
+  if(editingDraftId && effectiveCommand === activeDraftCommand){
+    // Editing an existing draft with the same command - update it in place
+    // rather than creating a new one, so Approve/Cancel still refer to the
+    // same draft_id.
+    res = await fetch('/api/chat/update', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({draft_id: editingDraftId, args})
+    });
+  } else {
+    if(editingDraftId){
+      // The command itself changed (no-plan toggled mid-edit) - update_draft
+      // can't change a draft's command, so cancel the old one and start fresh.
+      await fetch('/api/chat/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({draft_id: editingDraftId})});
+    }
+    res = await fetch('/api/chat/manual', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({command: effectiveCommand, args, current_workbook: currentWorkbook()})
+    });
+  }
+  editingDraftId = null;
+  const data = await res.json();
+  if(!data.ok){ toast(data.error || 'Could not prepare draft.', 'error'); return; }
+  renderPreview(data);
+}
+
+function setFieldValue(id, value){
+  if(value === undefined || value === null) return;
+  const el = document.getElementById(id);
+  if(el) el.value = value;
+}
+
+// Restores the values from an existing draft back into its form, so
+// clicking Edit lets you actually change something instead of starting
+// from a blank form again.
+async function populateForm(cmd, args){
+  if(cmd === 'add_intern_with_plan'){
+    setFieldValue('ai_name', args.name);
+    setFieldValue('ai_start_date', args.start_date);
+    setFieldValue('ai_end_date', args.end_date);
+    setFieldValue('ai_plan_name', args.plan_name);
+    setFieldValue('ai_manager', args.manager);
+  } else if(cmd === 'extend_intern_with_plan'){
+    setFieldValue('ei_intern', args.intern);
+    setFieldValue('ei_new_end', args.new_end);
+    setFieldValue('ei_plan_name', args.plan_name);
+  } else if(cmd === 'update_task_status'){
+    setFieldValue('ut_intern', args.intern);
+    if(args.intern){ await loadTasksInto('ut_intern','ut_task'); setFieldValue('ut_task', args.task_ref); }
+    setFieldValue('ut_status', args.status);
+  } else if(cmd === 'add_holiday'){
+    setFieldValue('ah_name', args.name);
+    setFieldValue('ah_date', args.date);
+    setFieldValue('ah_scope', args.scope || 'global');
+    if(args.scope === 'intern'){ onHolidayScopeChange(); setFieldValue('ah_intern', args.intern_name); }
+  } else if(cmd === 'create_plan_from_draft'){
+    setFieldValue('cp_plan_name', args.plan_name);
+    setFieldValue('cp_description', args.description);
+    // Rebuild the week rows from the actual generated/edited content -
+    // without this, Edit silently dropped whatever weeks were already
+    // there (AI-generated or manually entered), leaving an empty week
+    // editor that looked like nothing had carried over.
+    const weeksEl = document.getElementById('cp_weeks');
+    weeksEl.innerHTML = '';
+    weekCount = 0;
+    (args.weeks || []).forEach(w => addWeekRow(w));
+  } else if(cmd === 'edit_task'){
+    setFieldValue('et_intern', args.intern);
+    if(args.intern){ await loadTasksInto('et_intern','et_task'); setFieldValue('et_task', args.task_ref); }
+    setFieldValue('et_theme', args.theme);
+    setFieldValue('et_task_desc', args.task);
+    setFieldValue('et_status', args.status);
+    setFieldValue('et_remarks', args.remarks);
+  } else if(cmd === 'update_capstone'){
+    setFieldValue('uc_intern', args.intern);
+    setFieldValue('uc_title', args.title);
+    setFieldValue('uc_objective', args.objective);
+    setFieldValue('uc_tech_stack', args.tech_stack);
+    setFieldValue('uc_status', args.status);
+    setFieldValue('uc_target_end', args.target_end);
+  } else if(cmd === 'update_scenario'){
+    setFieldValue('us_intern', args.intern);
+    setFieldValue('us_scenario', args.scenario);
+    setFieldValue('us_skills', args.skills);
+    setFieldValue('us_deliverable', args.deliverable);
+    setFieldValue('us_status', args.status);
+    setFieldValue('us_due_date', args.due_date);
+  } else if(cmd === 'summary'){
+    setFieldValue('sm_intern', args.intern);
+  }
+}
+
+async function editDraft(){
+  const cmd = activeDraftCommand;
+  const args = lastPreviewArgs;
+  const sourceOverride = basename(args.source);
+  await pickCommand(cmd, sourceOverride);
+  await populateForm(cmd, args);
+  editingDraftId = activeDraftId;
+}
+
+// All three are read back by the executor at approval time - see
+// tracker_commands/executor.py's add_intern_with_plan/create_plan_from_draft/
+// extend_intern_with_plan dispatch, and plan_service.py's
+// extend_intern_with_plan now accepts schedule_preview explicitly instead of
+// always re-drafting the extension period from scratch.
+const EDITABLE_SCHEDULE_KEYS = ['schedule_preview', 'weeks', 'extension_schedule_preview'];
+const READONLY_SCHEDULE_KEYS = [];
+let currentScheduleKey = null;
+
+function scheduleRowHtml(w, i, editable){
+  const theme = w.theme || '';
+  // create_plan_from_draft's weeks use 'task'; add_intern's schedule_preview
+  // and extend_intern's extension_schedule_preview use 'daily_task'
+  // (or a 'daily_tasks' array) instead - without this fallback the Task
+  // box showed empty for those two even though the daily tasks genuinely
+  // exist and appear correctly in the generated Excel.
+  const task = w.task || w.daily_task || (Array.isArray(w.daily_tasks) && w.daily_tasks[0]) || '';
+  const project = w.weekly_project || '';
+  const notes = w.notes || '';
+  const header = `<div style="display:flex;justify-content:space-between;font-weight:600">
+      <span>Week ${escapeHtml(w.week ?? (i+1))}</span>
+      <span class="muted">${escapeHtml(w.date_range || '')}</span>
+    </div>`;
+  if(!editable){
+    return `<div class="card" style="margin:8px 0;padding:12px">${header}
+      <p style="margin:6px 0 0"><strong>Theme:</strong> ${escapeHtml(theme)}</p>
+      <p style="margin:4px 0 0"><strong>Weekly project:</strong> ${escapeHtml(project)}</p>
+      <p style="margin:4px 0 0"><strong>Notes:</strong> ${escapeHtml(notes)}</p>
+    </div>`;
+  }
+  return `<div class="card" style="margin:8px 0;padding:12px" data-week-index="${i}">${header}
+    <div class="grid-2" style="margin-top:6px">
+      <div class="field"><label>Theme</label><input class="sched-theme" value="${escapeHtml(theme)}"></div>
+      <div class="field"><label>Task</label><input class="sched-task" value="${escapeHtml(task)}"></div>
+      <div class="field"><label>Weekly project</label><input class="sched-project" value="${escapeHtml(project)}"></div>
+      <div class="field"><label>Notes</label><input class="sched-notes" value="${escapeHtml(notes)}"></div>
+    </div>
+  </div>`;
+}
+
+function renderScheduleEditor(args){
+  const container = document.getElementById('previewSchedule');
+  currentScheduleKey = null;
+  const editableKey = EDITABLE_SCHEDULE_KEYS.find(k => Array.isArray(args[k]) && args[k].length);
+  if(editableKey){
+    currentScheduleKey = editableKey;
+    const weeks = args[editableKey];
+    container.innerHTML = `<h4 style="margin:14px 0 4px">Weekly schedule (editable)</h4>`
+      + weeks.map((w,i) => scheduleRowHtml(w, i, true)).join('');
+    return;
+  }
+  const readonlyKey = READONLY_SCHEDULE_KEYS.find(k => Array.isArray(args[k]) && args[k].length);
+  if(readonlyKey){
+    const weeks = args[readonlyKey];
+    container.innerHTML = `<h4 style="margin:14px 0 4px">Weekly schedule (auto-generated from the plan)</h4>`
+      + `<p class="muted">This is regenerated fresh from the plan when approved, so it can't be edited here - edit the plan itself (Create Plan) if the weekly content needs to change.</p>`
+      + weeks.map((w,i) => scheduleRowHtml(w, i, false)).join('');
+    return;
+  }
+  container.innerHTML = '';
+}
+
+function collectScheduleEdits(){
+  if(!currentScheduleKey) return null;
+  const rows = [...document.querySelectorAll('#previewSchedule [data-week-index]')];
+  if(!rows.length) return null;
+  const original = lastPreviewArgs[currentScheduleKey] || [];
+  const weeks = rows.map((row, i) => {
+    const taskValue = row.querySelector('.sched-task').value;
+    return {
+      ...(original[i] || {}),
+      theme: row.querySelector('.sched-theme').value,
+      // Set every key form the backend might read for "the task" (see
+      // scheduleRowHtml's fallback chain) so the edit takes effect
+      // regardless of which schedule type this is. daily_tasks is
+      // overwritten to a single entry so every day in the week actually
+      // reflects the edit, instead of leaving stale multi-day AI content
+      // behind it.
+      task: taskValue,
+      daily_task: taskValue,
+      daily_tasks: [taskValue],
+      weekly_project: row.querySelector('.sched-project').value,
+      notes: row.querySelector('.sched-notes').value,
+    };
+  });
+  return weeks;
+}
+
+function collectFieldEdits(){
+  const edits = {};
+  document.querySelectorAll('#previewRows [data-field]').forEach(el => {
+    edits[el.dataset.field] = el.value;
+  });
+  return edits;
+}
+
+let activeDraftId = null;
+let activeDraftCommand = null;
+let lastPreviewArgs = {};
+let editingDraftId = null;
+function renderPreview(data){
+  document.getElementById('formCard').style.display = 'none';
+  const card = document.getElementById('previewCard');
+  card.style.display = 'block';
+  activeDraftId = data.draft_id;
+  activeDraftCommand = data.command;
+  lastPreviewArgs = data.args || data.known_args || {};
+  const label = data.label || COMMAND_TITLES[data.command] || data.command;
+  document.getElementById('previewTitle').textContent = label;
+  const actions = document.getElementById('previewActions');
+  if(data.type === 'result'){
+    // Read-only command (summary) - already executed, nothing to approve.
+    // The actual report text is nested under data.data.summary; data.message
+    // is just a generic label ("Generated progress summary").
+    const msgEl0 = document.getElementById('previewMessage');
+    msgEl0.style.whiteSpace = 'pre-wrap';
+    msgEl0.style.maxHeight = '360px';
+    msgEl0.style.overflowY = 'auto';
+    msgEl0.textContent = (data.data && data.data.summary) || data.message || '';
+    document.getElementById('previewRows').innerHTML = '';
+    document.getElementById('previewSchedule').innerHTML = '';
+    actions.innerHTML = `<button onclick="backToForm()">Close</button>`;
+    return;
+  }
+  const msgEl = document.getElementById('previewMessage');
+  msgEl.style.whiteSpace = '';
+  msgEl.style.maxHeight = '';
+  msgEl.style.overflowY = '';
+  const args = data.args || data.known_args || {};
+  if(args.extension_preview_error){
+    // A real problem building the schedule preview (e.g. the requested
+    // date leaves no working day to extend into) - show it as a warning,
+    // not just another editable-looking row, so it isn't missed.
+    msgEl.innerHTML = `<span class="error">${escapeHtml(args.extension_preview_error)}</span>`;
+  } else {
+    msgEl.textContent = data.type === 'needs_more_info'
+      ? (data.message || '')
+      : 'Review the plan below, edit anything that needs changing, then approve.';
+  }
+  const skipKeys = new Set(['output', 'source', 'workbook', 'quality_warnings', 'extension_preview_error']);
+  const scalarKeys = Object.entries(args)
+    .filter(([k,v]) => v !== null && v !== undefined && v !== '' && !skipKeys.has(k) && !Array.isArray(v) && typeof v !== 'object');
+  if(data.type === 'needs_more_info'){
+    // Required fields are missing entirely (e.g. no plan/intern chosen at
+    // all yet) - there's nothing here to edit inline, so this is the one
+    // case that still needs the full form with its dropdowns.
+    document.getElementById('previewRows').innerHTML = scalarKeys
+      .map(([k,v]) => `<tr><td style="font-weight:600;text-transform:capitalize">${escapeHtml(k.replace(/_/g,' '))}</td><td>${escapeHtml(v)}</td></tr>`)
+      .join('');
+    renderScheduleEditor(args);
+    actions.innerHTML = `<button onclick="editDraft()">Back to form</button>`;
+    return;
+  }
+  // Everything below is directly editable in place - same idea as the
+  // schedule table: no separate "Edit" step, just change the value and
+  // Approve. Matches what was actually asked for instead of bouncing back
+  // to a whole separate form that looked identical to starting fresh.
+  document.getElementById('previewRows').innerHTML = scalarKeys
+    .map(([k,v]) => `<tr><td style="font-weight:600;text-transform:capitalize">${escapeHtml(k.replace(/_/g,' '))}</td><td><input data-field="${escapeHtml(k)}" value="${escapeHtml(v)}"></td></tr>`)
+    .join('');
+  renderScheduleEditor(args);
+  actions.innerHTML = `<button class="success" onclick="approveDraft(this)">Approve</button><button class="danger" onclick="cancelDraft()">Cancel</button>`;
+}
+function backToForm(){
+  document.getElementById('previewCard').style.display = 'none';
+  document.getElementById('formCard').style.display = 'block';
+}
+async function approveDraft(btn){
+  await withLoading(btn, async ()=>{
+    // Push any inline edits (top-level fields + schedule table) before
+    // approving, so Approve always executes against what's currently
+    // shown on screen, not the original unedited draft.
+    const editedArgs = collectFieldEdits();
+    const editedWeeks = collectScheduleEdits();
+    if(editedWeeks){ editedArgs[currentScheduleKey] = editedWeeks; }
+    if(Object.keys(editedArgs).length){
+      await fetch('/api/chat/update', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({draft_id: activeDraftId, args: editedArgs})
+      });
+    }
+    const r = await fetch('/api/chat/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({draft_id: activeDraftId})});
+    const d = await r.json();
+    if(d.ok){
+      toast(d.message || 'Done.', 'success');
+      document.getElementById('previewMessage').style.whiteSpace = 'pre-wrap';
+      document.getElementById('previewMessage').textContent = d.message || 'Done.';
+      document.getElementById('previewRows').innerHTML = '';
+      document.getElementById('previewSchedule').innerHTML = '';
+      const actions = document.getElementById('previewActions');
+      actions.innerHTML = (d.download ? `<a class="btn btn-primary" href="${escapeHtml(d.download)}" download>Download</a>` : '') + `<button onclick="closePreview()">Close</button>`;
+      // Every approved action produces a new/updated workbook file - auto-select
+      // it so the next action targets the up-to-date file instead of the stale
+      // one, and it's clear which file to look at without hunting the dropdown.
+      if(d.output_path){
+        const filename = d.output_path.split(/[\\/]/).pop();
+        await refreshFiles();
+        setCurrentWorkbook(filename);
+        document.getElementById('fileSelect').value = filename;
+        await loadInternDropdowns();
+      }
+    } else {
+      toast(d.error || 'Approval failed.', 'error');
+    }
+  });
+}
+function closePreview(){
+  document.getElementById('previewCard').style.display = 'none';
+  resetForm();
+}
+async function cancelDraft(){
+  await fetch('/api/chat/cancel', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({draft_id: activeDraftId})});
+  document.getElementById('previewCard').style.display = 'none';
+  editingDraftId = null;
+  toast('Draft cancelled.', 'info');
+}
+
+refreshFiles().then(loadInternDropdowns);
+renderNav();
+</script>
+</body></html>

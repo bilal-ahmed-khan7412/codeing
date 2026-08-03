@@ -14,6 +14,7 @@
       <div class="field"><label>Email</label><input id="email"></div>
       <div class="field"><label>Department</label><input id="department"></div>
       <div class="field"><label>New Password</label><input id="password" type="password"></div>
+      <div class="field"><label><input type="checkbox" id="auto_cleanup" style="width:auto;min-height:auto;display:inline-block;margin-right:6px"> Auto-delete the previous file when a new one supersedes it (no version history kept)</label></div>
       <button onclick="save()">Save</button>
       <p id="msg"></p>
     </div>
@@ -21,8 +22,8 @@
 </div>
 <script src="/static/js/nav.js"></script>
 <script>
-async function me(){const r=await fetch('/api/me');const d=await r.json();if(d.user){name.value=d.user.name||'';email.value=d.user.email||'';department.value=d.user.department||'';}};
-async function save(){const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.value,email:email.value,department:department.value,password:password.value})});const d=await r.json();msg.textContent=d.ok?'Saved.':(d.error||'Error');}me();
+async function me(){const r=await fetch('/api/me');const d=await r.json();if(d.user){name.value=d.user.name||'';email.value=d.user.email||'';department.value=d.user.department||'';auto_cleanup.checked=!!d.user.auto_cleanup_versions;}};
+async function save(){const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.value,email:email.value,department:department.value,password:password.value,auto_cleanup_versions:auto_cleanup.checked})});const d=await r.json();msg.textContent=d.ok?'Saved.':(d.error||'Error');}me();
 renderNav();
 </script>
 </body></html>

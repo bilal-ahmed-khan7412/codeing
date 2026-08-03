@@ -21,6 +21,7 @@ from tracker_audit.audit_service import AuditService
 from tracker_tasks.task_service import TaskService
 from tracker_audit.audit_db import init_db
 from tracker_chat.chat_service import ChatService
+from tracker_excel.renderer.parser import parse_workbook
 from tracker_auth.jwt_service import create_session_token, decode_session_token, SESSION_TTL_SECONDS
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -141,6 +142,20 @@ def chat_page(request: Request):
     if not current_user_from_request(request):
         return RedirectResponse('/login')
     return (BASE_DIR / "web" / "chat.html").read_text(encoding="utf-8")
+
+
+@app.get("/workflow", response_class=HTMLResponse)
+def workflow_page(request: Request):
+    if not current_user_from_request(request):
+        return RedirectResponse('/login')
+    return (BASE_DIR / "web" / "workflow.html").read_text(encoding="utf-8")
+
+
+@app.get("/forms", response_class=HTMLResponse)
+def forms_page(request: Request):
+    if not current_user_from_request(request):
+        return RedirectResponse('/login')
+    return (BASE_DIR / "web" / "forms.html").read_text(encoding="utf-8")
 
 
 
@@ -488,6 +503,20 @@ def chat_approve(request: Request, payload: dict):
         audit_service.log(user, interface='Chat', action=getattr(draft, 'command', 'chat_approve'), target_name=(getattr(draft, 'args', {}) or {}).get('intern') or (getattr(draft, 'args', {}) or {}).get('name') or (getattr(draft, 'args', {}) or {}).get('plan_name') or '', input_workbook=(getattr(draft, 'args', {}) or {}).get('source') or (getattr(draft, 'args', {}) or {}).get('workbook') or '', output_workbook=Path(result.get('output_path','')).name if result.get('output_path') else '', approval_status='Approved', status='Success' if result.get('ok') else 'Failed', summary=result.get('message',''), error_message=result.get('error',''))
         if result.get('output_path'):
             result['download'] = f"/download/{Path(result['output_path']).name}"
+        # Opt-in preference (Profile page): keep only the latest version of a
+        # workbook instead of a new file per action forever. Only ever
+        # deletes a file inside this user's own upload/output directory -
+        # the ownership check is what keeps this safe for an Admin/Super
+        # Admin who might have another user's or a legacy file selected.
+        if result.get('ok') and user.get('auto_cleanup_versions'):
+            try:
+                old_source = Path(args.get('source') or '')
+                new_output = Path(result.get('output_path') or '')
+                own_dirs = {user_upload_dir(user).resolve(), user_output_dir(user).resolve()}
+                if old_source.exists() and old_source.resolve().parent in own_dirs and old_source.resolve() != new_output.resolve():
+                    old_source.unlink()
+            except Exception:
+                pass
         return result
     except Exception as e:
         return JSONResponse(status_code=500, content={'ok': False, 'error': str(e)})
@@ -495,6 +524,96 @@ def chat_approve(request: Request, payload: dict):
 @app.post("/api/chat/cancel")
 def chat_cancel(payload: dict):
     return chat_service.cancel(payload.get('draft_id'))
+
+
+@app.post("/api/chat/manual")
+def chat_manual(request: Request, payload: dict):
+    """Create a draft directly from structured Forms UI input, bypassing
+    all text-parsing. Same draft lifecycle as /api/chat/message from here
+    on - the returned draft_id works with update/approve/cancel unchanged.
+    """
+    user = require_login(request)
+    command = payload.get('command', '')
+    args = payload.get('args') or {}
+    current_workbook = payload.get('current_workbook')
+    if current_workbook:
+        current_workbook = resolve_workbook(current_workbook, user)
+    return chat_service.create_manual_draft(command, args, current_workbook)
+
+
+@app.get("/api/workbook/interns")
+def workbook_interns(request: Request, source: str = ''):
+    """List intern names in a workbook, for Forms UI dropdowns."""
+    user = require_login(request)
+    if not source:
+        return {'ok': True, 'interns': []}
+    try:
+        path = resolve_workbook(source, user)
+        data = parse_workbook(path)
+        return {'ok': True, 'interns': [i.name for i in data.interns]}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
+
+
+@app.get("/api/workbook/plans")
+def workbook_plans(request: Request, source: str = ''):
+    """List plan names in a workbook, for Forms UI dropdowns.
+
+    Plan sheet titles are stored as "Plan — <name>" (see plan_service.py's
+    create_plan_from_draft); strip that prefix so the dropdown shows just
+    the name, and so the value submitted back matches what _find_plan's
+    substring match against .title expects.
+    """
+    user = require_login(request)
+    if not source:
+        return {'ok': True, 'plans': []}
+    try:
+        path = resolve_workbook(source, user)
+        data = parse_workbook(path)
+        names = []
+        for p in data.plans:
+            title = (p.title or '').strip()
+            name = title.split('—', 1)[1].strip() if '—' in title else (title or p.sheet_name)
+            if name:
+                names.append(name)
+        return {'ok': True, 'plans': names}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
+
+
+@app.get("/api/workbook/tasks")
+def workbook_tasks(request: Request, source: str = '', intern: str = ''):
+    """List an intern's tasks (date/theme/status), for the Forms UI task picker."""
+    user = require_login(request)
+    if not source or not intern:
+        return {'ok': True, 'tasks': []}
+    try:
+        path = resolve_workbook(source, user)
+        data = parse_workbook(path)
+        match = next((i for i in data.interns if i.name.strip().lower() == intern.strip().lower()), None)
+        if not match:
+            return {'ok': True, 'tasks': []}
+        # Substring match, not exact - actual headers are things like
+        # "Status (Pending/In Progress/Completed)", not the bare word.
+        headers = [str(h or '').strip().lower() for h in (match.task_headers or [])]
+        def col(*names):
+            for i, h in enumerate(headers):
+                if any(n in h for n in names):
+                    return i
+            return None
+        date_i, theme_i, status_i = col('date'), col('theme', 'task'), col('status')
+        tasks = []
+        for row in match.tasks:
+            date_val = row[date_i] if date_i is not None and date_i < len(row) else None
+            if date_val is None:
+                continue
+            date_str = date_val.strftime('%Y-%m-%d') if hasattr(date_val, 'strftime') else str(date_val)
+            theme_val = row[theme_i] if theme_i is not None and theme_i < len(row) else ''
+            status_val = row[status_i] if status_i is not None and status_i < len(row) else ''
+            tasks.append({'date': date_str, 'theme': str(theme_val or ''), 'status': str(status_val or '')})
+        return {'ok': True, 'tasks': tasks}
+    except Exception as e:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
 
 
 # v0.61 approval-role governance routes

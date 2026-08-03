@@ -2,9 +2,9 @@
 // only once /api/me resolves, so a role's links are never shown then
 // stripped - nothing appears until the real role is known.
 const NAV_LINKS = {
-  "Super Admin": [["/", "Dashboard"], ["/chat", "Chat"], ["/users", "Users"], ["/logs", "Logs"], ["/tasks", "Tasks"], ["/evaluation", "Evaluation"], ["/profile", "Profile"], ["/logout", "Logout"]],
-  "Admin": [["/", "Dashboard"], ["/chat", "Chat"], ["/users", "Users"], ["/logs", "Logs"], ["/tasks", "Tasks"], ["/evaluation", "Evaluation"], ["/profile", "Profile"], ["/logout", "Logout"]],
-  "User": [["/", "Dashboard"], ["/chat", "Chat"], ["/profile", "Profile"], ["/logout", "Logout"]],
+  "Super Admin": [["/", "Dashboard"], ["/workflow", "Workflow"], ["/users", "Users"], ["/logs", "Logs"], ["/tasks", "Ticket Tracker"], ["/evaluation", "Evaluation"], ["/profile", "Profile"], ["/logout", "Logout"]],
+  "Admin": [["/", "Dashboard"], ["/workflow", "Workflow"], ["/users", "Users"], ["/logs", "Logs"], ["/tasks", "Ticket Tracker"], ["/evaluation", "Evaluation"], ["/profile", "Profile"], ["/logout", "Logout"]],
+  "User": [["/", "Dashboard"], ["/workflow", "Workflow"], ["/profile", "Profile"], ["/logout", "Logout"]],
 };
 
 function navEscapeHtml(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }

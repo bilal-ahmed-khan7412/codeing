@@ -324,6 +324,51 @@ class ChatService:
         self._force_enrich_ready_add_intern_with_plan(draft)
         return self._response_for_draft(draft)
 
+    # Commands exposed to the Forms UI (web/forms.html). Enforced here, not
+    # just by what the frontend happens to show, since /api/chat/manual is a
+    # real endpoint a client could call directly with any command name.
+    _MANUAL_DRAFT_COMMANDS = {
+        'add_intern_with_plan', 'extend_intern_with_plan', 'extend_intern',
+        'update_task_status', 'add_holiday', 'create_plan_from_draft', 'edit_task',
+        'update_capstone', 'update_scenario', 'summary', 'create_workbook',
+    }
+
+    def create_manual_draft(self, command: str, args: dict, current_workbook: str | None) -> dict:
+        """Build a draft directly from structured args (Forms UI), skipping
+        all text-parsing entirely. Reuses the exact same draft lifecycle
+        (_response_for_draft, update_draft, approve, cancel) the chat/LLM
+        path already uses, since none of that logic depends on how the
+        draft's command/args were populated. 'summary' is read-only and
+        _response_for_draft already special-cases it to execute
+        immediately instead of waiting for approval - same as the chat path.
+        """
+        if command not in self._MANUAL_DRAFT_COMMANDS:
+            return {'ok': False, 'error': f'Unsupported command for forms: {command}'}
+        args = dict(args or {})
+        # Only a name should be required for Create Plan - if the user
+        # didn't build any week rows manually, draft the weeks with the
+        # same LLM path chat uses (_draft_plan_with_llm) instead of
+        # producing a plan with no content. Reconstructs a natural-language
+        # request from the structured fields so the existing plan-name/
+        # week-count extraction and LLM prompt work unchanged.
+        if command == 'create_plan_from_draft' and not args.get('weeks'):
+            plan_name = (args.get('plan_name') or '').strip()
+            weeks_count = args.get('weeks_count') or 8
+            description = (args.get('description') or '').strip()
+            text = f"Create a {weeks_count}-week plan called {plan_name}."
+            if description:
+                text += f" {description}"
+            draft = self._draft_plan_with_llm(text, current_workbook)
+            return self._response_for_draft(draft)
+        if current_workbook:
+            if command == 'summary':
+                args.setdefault('workbook', current_workbook)
+            else:
+                args.setdefault('source', current_workbook)
+        self._defaults(command, args)
+        draft = ChatDraft(str(uuid.uuid4()), command, args)
+        return self._response_for_draft(draft)
+
     def approve(self, draft_id: str) -> dict:
         draft = self.drafts.get(draft_id)
         if not draft:
@@ -442,15 +487,26 @@ class ChatService:
                     intern_obj = item
                     break
             if not intern_obj:
+                args['extension_preview_error'] = f"Intern {args.get('intern')} not found in the workbook - the schedule preview can't be built."
                 return
             current_end = intern_obj.main_row[4] if len(intern_obj.main_row) > 4 else None
             if not isinstance(current_end, datetime):
+                args['extension_preview_error'] = 'Could not read the intern\'s current end date from the workbook.'
                 return
             new_end_dt = datetime.fromisoformat(str(args.get('new_end')))
             extension_start = current_end + timedelta(days=1)
             while extension_start.weekday() >= 5:
                 extension_start += timedelta(days=1)
             if extension_start.date() > new_end_dt.date():
+                # Once weekends between the current end date and the
+                # requested new end date are skipped, there's no actual
+                # working day left to extend into. Silently returning here
+                # (as before) left the proposal looking complete with no
+                # schedule and no explanation - surface it instead.
+                args['extension_preview_error'] = (
+                    f"New end date {new_end_dt.strftime('%Y-%m-%d')} doesn't leave any working day to extend into "
+                    f"after {current_end.strftime('%Y-%m-%d')} (weekends are skipped) - pick a later date."
+                )
                 return
 
             draft_sheet = self.intern_sheet_drafter.draft(
@@ -1101,11 +1157,17 @@ class ChatService:
         """Draft a complete intern-sheet preview using the selected plan as context.
 
         This does not create the workbook. It only enriches the in-memory draft so
-        the user can review/edit before approval.
+        the user can review/edit before approval. Only runs the (re-)draft once,
+        the first time schedule_preview is empty - _response_for_draft calls this
+        on every update_draft/approve round-trip, so without this guard a manual
+        edit to schedule_preview (Forms UI's per-week editor) got silently
+        regenerated and discarded on the very next call.
         """
         args = draft.args
         required = ['source', 'name', 'start_date', 'end_date', 'plan_name']
         if any(not args.get(k) for k in required):
+            return
+        if args.get('schedule_preview'):
             return
         try:
             sheet = self.intern_sheet_drafter.draft(args.get('source'), args.get('name'), args.get('start_date'), args.get('end_date'), args.get('plan_name'))

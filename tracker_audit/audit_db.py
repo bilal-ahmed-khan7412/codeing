@@ -32,6 +32,12 @@ def init_db():
         last_logout TEXT
     )
     ''')
+    # CREATE TABLE IF NOT EXISTS above doesn't add columns to an
+    # already-existing table, so migrate older DBs with a guarded ALTER.
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN auto_cleanup_versions INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     cur.execute('''
     CREATE TABLE IF NOT EXISTS activity_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
