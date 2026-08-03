@@ -1,25 +1,27 @@
 <!doctype html><html><head><title>Super Admin Dashboard</title>
-<style>
-body{font-family:Arial,sans-serif;background:#f4f6fb;margin:0;color:#1f2937}header{background:#305496;color:white;padding:18px 28px;display:flex;justify-content:space-between;align-items:center}header a{color:white;font-weight:700;margin-left:14px}main{max-width:1100px;margin:0 auto;padding:20px}.card{background:white;border:1px solid #d9e2ef;border-radius:14px;padding:20px;box-shadow:0 4px 16px rgba(15,23,42,.06)}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:20px}.tile{background:white;border:1px solid #d9e2ef;border-radius:14px;padding:20px;box-shadow:0 4px 16px rgba(15,23,42,.06)}.tile h3{margin:0 0 8px}.tile p{color:#64748b;font-size:13px;min-height:36px}.btn{display:inline-block;background:#305496;color:white;text-decoration:none;padding:9px 14px;border-radius:9px;font-weight:700;margin-top:10px}.muted{color:#64748b;font-size:13px}.badge{display:inline-block;background:#eef2ff;color:#305496;font-weight:700;font-size:12px;padding:4px 10px;border-radius:999px}.nav a{color:white}
-</style>
+<link rel="stylesheet" href="/static/css/app.css">
 </head><body>
-<header><h2>Intern Tracker</h2><div class="nav"><a href="/chat">Chat</a><a href="/users">Users</a><a href="/logs">Logs</a><a href="/tasks">Tasks</a><a href="/evaluation">Evaluation</a><a href="/profile">Profile</a><a href="/logout">Logout</a></div></header>
-<main>
-<div class="card">
-  <span class="badge" id="userRole">Super Admin</span>
-  <h2 style="margin:10px 0 4px" id="welcome">Welcome</h2>
-  <p class="muted" id="userEmail"></p>
-  <p class="muted">Full access: manage users/admins, review logs, run the chat assistant, and finalize evaluations.</p>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="card blueprint elev-sm" style="padding:22px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <span class="tag tag-accent" id="userRole">Super Admin</span>
+      <h2 style="margin:8px 0 2px" id="welcome">Welcome</h2>
+      <p class="text-muted" id="userEmail" style="margin:0"></p>
+      <p style="margin:10px 0 0;font-size:14px">Full access: manage users/admins, review logs, run the chat assistant, and finalize evaluations.</p>
+    </div>
+    <div class="grid">
+      <div class="card blueprint elev-sm"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="card-kicker">Assistant</div><div class="card-title">Chat Assistant</div><p class="card-body">Create plans, add interns, generate summaries, and manage tracker operations.</p><a class="btn btn-secondary" href="/chat" style="width:fit-content;margin-top:10px">Open Chat</a></div>
+      <div class="card blueprint elev-sm"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="card-kicker">Governance</div><div class="card-title">User Management</div><p class="card-body">Approve users, assign roles, promote/demote admins, activate or deactivate accounts.</p><a class="btn btn-secondary" href="/users" style="width:fit-content;margin-top:10px">Manage Users</a></div>
+      <div class="card blueprint elev-sm"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="card-kicker">Governance</div><div class="card-title">Audit Logs</div><p class="card-body">Review system activity, approvals, and exported records across all users.</p><a class="btn btn-secondary" href="/logs" style="width:fit-content;margin-top:10px">View Logs</a></div>
+      <div class="card blueprint elev-sm"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="card-kicker">Team</div><div class="card-title">Tasks</div><p class="card-body">Manage governance and admin-level task tracking.</p><a class="btn btn-secondary" href="/tasks" style="width:fit-content;margin-top:10px">Open Tasks</a></div>
+      <div class="card blueprint elev-sm"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="card-kicker">Assessment</div><div class="card-title">Evaluation</div><p class="card-body">Upload tracker and evaluation files, score interns, and finalize reports.</p><a class="btn btn-secondary" href="/evaluation" style="width:fit-content;margin-top:10px">Open Evaluation</a></div>
+      <div class="card blueprint elev-sm"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i><div class="card-kicker">Account</div><div class="card-title">Profile</div><p class="card-body">Update your own account details and password.</p><a class="btn btn-secondary" href="/profile" style="width:fit-content;margin-top:10px">Open Profile</a></div>
+    </div>
+  </main>
 </div>
-<div class="grid">
-  <div class="tile"><h3>Chat Assistant</h3><p>Create plans, add interns, generate summaries, and manage tracker operations.</p><a class="btn" href="/chat">Open Chat</a></div>
-  <div class="tile"><h3>User Management</h3><p>Approve users, assign roles, promote/demote admins, activate or deactivate accounts.</p><a class="btn" href="/users">Manage Users</a></div>
-  <div class="tile"><h3>Audit Logs</h3><p>Review system activity, approvals, and exported records across all users.</p><a class="btn" href="/logs">View Logs</a></div>
-  <div class="tile"><h3>Tasks</h3><p>Manage governance and admin-level task tracking.</p><a class="btn" href="/tasks">Open Tasks</a></div>
-  <div class="tile"><h3>Evaluation</h3><p>Upload tracker and evaluation files, score interns, and finalize reports.</p><a class="btn" href="/evaluation">Open Evaluation</a></div>
-  <div class="tile"><h3>Profile</h3><p>Update your own account details and password.</p><a class="btn" href="/profile">Open Profile</a></div>
-</div>
-</main>
+<script src="/static/js/nav.js"></script>
 <script>
 async function loadMe(){
   try{
@@ -35,5 +37,6 @@ async function loadMe(){
   }
 }
 loadMe();
+renderNav();
 </script>
 </body></html>

@@ -6,7 +6,7 @@
   <title>Intern Tracker Chat Assistant</title>
   <link rel="stylesheet" href="/static/css/app.css">
   <style>
-    :root { --blue:#305496; --light:#f4f6fb; --border:#d9e2ef; --text:#1f2937; --muted:#64748b; --assistant:#ffffff; --user:#dbeafe; --ok:#166534; --bad:#991b1b; }
+    :root { --blue:var(--color-accent-700); --light:var(--color-bg); --border:var(--color-divider); --text:var(--color-text); --muted:color-mix(in srgb, var(--color-text) 55%, transparent); --assistant:var(--color-bg); --user:var(--color-accent-100); --ok:var(--color-accent-700); --bad:var(--color-accent-900); }
     * { box-sizing:border-box; }
     body { margin:0; font-family: Arial, sans-serif; background:var(--light); color:var(--text); }
     header { background:var(--blue); color:white; padding:18px 28px; display:flex; justify-content:space-between; align-items:center; gap:16px; }
@@ -254,13 +254,15 @@ details.week-card summary {
 </style>
 </head>
 <body>
-<header>
-  <div>
-    <h1>Intern Tracker Chat Assistant</h1>
-    <div style="font-size:13px; opacity:.9;">Draft, review, approve, then execute. The assistant does not execute without approval.</div></div>
-  
-<div style="padding:0 28px 12px;background:#305496;" id="nav"></div></header>
-<main>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <div style="flex:1;display:flex;flex-direction:column;box-sizing:border-box">
+    <div style="padding:20px 28px 0">
+      <div class="kicker">Assistant</div>
+      <h2 style="margin:0 0 4px">Intern Tracker Chat Assistant</h2>
+      <div class="text-muted" style="font-size:13px;margin-bottom:6px">Draft, review, approve, then execute. The assistant does not execute without approval.</div>
+    </div>
+    <main>
   <section class="panel chat-shell">
     <div class="chat-top">
       <div>
@@ -313,7 +315,9 @@ details.week-card summary {
     <h2 style="margin-top:22px;">Active Proposal</h2>
     <div id="proposalBox" class="hint">No proposal yet.</div>
   </aside>
-</main>
+    </main>
+  </div>
+</div>
 <script>
 let activeDraftId = null;
 let activeDraftNeedsInfo = false;
@@ -1645,5 +1649,67 @@ body {
 
 </style>
 
+<style id="industry-chat-overrides">
+.panel{background:var(--color-bg) !important;border:1px solid var(--color-divider) !important;box-shadow:var(--shadow-sm) !important;border-radius:0 !important}
+.msg{border-radius:0 !important;border:1px solid var(--color-divider) !important}
+.msg.user{background:var(--color-accent-100) !important}
+.msg.assistant{background:var(--color-bg) !important}
+.msg.system{background:var(--color-accent-100) !important;color:var(--color-accent-900) !important;border-color:var(--color-accent-300) !important}
+button{border-radius:0 !important}
+button.primary{background:var(--color-accent) !important;border-color:var(--color-accent) !important;color:var(--color-bg) !important}
+button.success{background:var(--color-accent-700) !important;border-color:var(--color-accent-700) !important;color:var(--color-bg) !important}
+button.danger{background:transparent !important;border-color:var(--color-accent-700) !important;color:var(--color-accent-800) !important}
+textarea,input,select{border-radius:0 !important;border-color:var(--color-divider) !important}
+.current{background:var(--color-accent-100) !important;border-color:var(--color-accent-300) !important;border-radius:0 !important}
+.proposal,.proposal-header,.section-card,.week-edit,details.week-card,.edit-area,.edit-area details{background:var(--color-surface) !important;border-color:var(--color-divider) !important;border-radius:0 !important}
+.proposal h3,.proposal-header h3,.section-card h4,.week-edit h4,details.week-card summary,.kv-label,.download a{color:var(--color-accent-800) !important}
+.missing{background:var(--color-accent-100) !important;border-color:var(--color-accent-600) !important;border-radius:0 !important}
+.status-ok{color:var(--color-accent-700) !important}
+.status-bad{color:var(--color-accent-900) !important}
+#approvalState{color:var(--color-accent-800) !important}
+#chatLog{background:var(--color-bg) !important}
+#chatLog .msg,#chatLog .msg.user,#chatLog .msg.assistant,#chatLog .msg.system{border-radius:0 !important}
+.example{border-radius:0 !important}
+.side,.chat-shell{border-radius:0 !important}
+
+/* Replace the old header-height-dependent calc(100vh - Npx) sizing (the
+   title block that replaced <header> is a different height) with fixed,
+   viewport-relative heights so #chatLog's flex-basis:0 child always has a
+   real, non-collapsing height to grow into, in both the 2-col and the
+   <980px stacked layout. */
+main,.v93-left-column{
+  max-width:1180px !important;
+  height:auto !important;
+  min-height:0 !important;
+  max-height:none !important;
+  display:grid !important;
+  grid-template-columns:minmax(420px,1fr) minmax(340px,420px) !important;
+  gap:16px !important;
+  padding:16px !important;
+  overflow:visible !important;
+}
+.v93-chat-page{height:auto !important;max-height:none !important;overflow:visible !important}
+.chat-shell,.v93-chat-card{
+  height:72vh !important;
+  min-height:520px !important;
+  max-height:none !important;
+  flex:none !important;
+  display:flex !important;
+  flex-direction:column !important;
+  overflow:hidden !important;
+}
+.side{
+  height:72vh !important;
+  min-height:520px !important;
+  max-height:none !important;
+  position:static !important;
+  overflow-y:auto !important;
+}
+#proposalBox{max-height:none !important}
+@media (max-width:980px){
+  main,.v93-left-column{grid-template-columns:1fr !important;overflow:visible !important}
+  .chat-shell,.side,.v93-chat-card{height:60vh !important;min-height:420px !important}
+}
+</style>
 </body>
 </html>

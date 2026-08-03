@@ -5,29 +5,35 @@
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
-<header>
-  <h2>Activity Logs</h2>
-  <div id="nav"></div>
-</header>
-<main>
-  <div class="card">
-    <h3>Filters</h3>
-    <p class="muted">Shows login/logout, user actions, chat approvals, command execution, failures, and task tracking activity.</p>
-    <div class="grid-4">
-      <label>Search<input id="filter_q" placeholder="intern, plan, workbook, summary"></label>
-      <label>Email<input id="filter_email" placeholder="user email"></label>
-      <label>Action<input id="filter_action" placeholder="Login, Add Intern, Create Plan"></label>
-      <label>Status<input id="filter_status" placeholder="Success, Failed, Blocked"></label></div>
-    <button onclick="loadLogs()">Apply</button>
-    <button onclick="clearFilters()">Clear</button>
-    <a href="/api/logs/export"><button>Export CSV</button></a>
-    <span id="logStatus" class="muted"></span></div>
-  <div class="card">
-    <table>
-      <thead><tr><th>Time</th><th>User</th><th>Role</th><th>Interface</th><th>Action</th><th>Target</th><th>Status</th><th>Approval</th><th>Output</th><th>Summary / Error</th></tr></thead>
-      <tbody id="logRows"><tr><td colspan="10" class="empty">Loading logs...</td></tr></tbody>
-    </table></div>
-</main>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="kicker">Operations</div>
+    <h2 style="margin:0 0 20px">Activity Logs</h2>
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 4px">Filters</h3>
+      <p class="muted">Shows login/logout, user actions, chat approvals, command execution, failures, and task tracking activity.</p>
+      <div class="grid-4">
+        <div class="field"><label>Search</label><input id="filter_q" placeholder="intern, plan, workbook, summary"></div>
+        <div class="field"><label>Email</label><input id="filter_email" placeholder="user email"></div>
+        <div class="field"><label>Action</label><input id="filter_action" placeholder="Login, Add Intern, Create Plan"></div>
+        <div class="field"><label>Status</label><input id="filter_status" placeholder="Success, Failed, Blocked"></div>
+      </div>
+      <button onclick="loadLogs()">Apply</button>
+      <button onclick="clearFilters()">Clear</button>
+      <a href="/api/logs/export"><button>Export CSV</button></a>
+      <span id="logStatus" class="muted"></span>
+    </div>
+    <div class="card blueprint elev-sm" style="padding:20px;overflow-x:auto">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <table>
+        <thead><tr><th>Time</th><th>User</th><th>Role</th><th>Interface</th><th>Action</th><th>Target</th><th>Status</th><th>Approval</th><th>Output</th><th>Summary / Error</th></tr></thead>
+        <tbody id="logRows"><tr><td colspan="10" class="empty">Loading logs...</td></tr></tbody>
+      </table>
+    </div>
+  </main>
+</div>
 <script src="/static/js/nav.js"></script>
 <script>
 function esc(v){return String(v ?? '').replace(/[&<>\"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));}

@@ -1,10 +1,31 @@
 <!doctype html><html><head><title>Users</title>
 <link rel="stylesheet" href="/static/css/app.css">
 </head><body>
-<header><h2>User Management</h2><div id="nav"></div></header>
-<main><div class="card"><h3>Access Requests & Users</h3><p class="muted">Admins can approve and manage Users only. Super Admin can approve Users/Admins and manage Admins.</p><p id="msg" class="muted" aria-live="polite"></p><table><thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div>
-<div class="card"><h3>Password Reset Requests</h3><p class="muted">Admins can reset normal Users only. Super Admin can reset Admins and Users. Temporary passwords are shown once.</p><p id="resetMsg" class="muted" aria-live="polite"></p><table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Requested</th><th>Remarks</th><th>Actions</th></tr></thead><tbody id="resetRows"></tbody></table></div>
-</main>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="kicker">Governance</div>
+    <h2 style="margin:0 0 20px">User Management</h2>
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 4px">Access Requests &amp; Users</h3>
+      <p class="muted">Admins can approve and manage Users only. Super Admin can approve Users/Admins and manage Admins.</p>
+      <p id="msg" class="muted" aria-live="polite"></p>
+      <div style="overflow-x:auto">
+        <table><thead><tr><th>Name</th><th>Email</th><th>Department</th><th>Role</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table>
+      </div>
+    </div>
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 4px">Password Reset Requests</h3>
+      <p class="muted">Admins can reset normal Users only. Super Admin can reset Admins and Users. Temporary passwords are shown once.</p>
+      <p id="resetMsg" class="muted" aria-live="polite"></p>
+      <div style="overflow-x:auto">
+        <table><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Requested</th><th>Remarks</th><th>Actions</th></tr></thead><tbody id="resetRows"></tbody></table>
+      </div>
+    </div>
+  </main>
+</div>
 <script src="/static/js/nav.js"></script>
 <script src="/static/js/ui.js"></script>
 <script>
@@ -29,7 +50,7 @@ function rowHtml(u){let actions='';
   if(u.status==='Inactive'){
     if(isSuper() || (isAdmin()&&u.role==='User')) actions+=`<button class="success" onclick="reactivate(this,${u.id})">Reactivate</button>`;
   }
-  return `<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.department||'')}</td><td><span class="badge">${escapeHtml(u.role)}</span></td><td>${escapeHtml(u.status)}</td><td>${escapeHtml(u.last_login||'')}</td><td>${actions}</td></tr>`}
+  return `<tr><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.department||'')}</td><td><span class="tag tag-accent">${escapeHtml(u.role)}</span></td><td>${escapeHtml(u.status)}</td><td>${escapeHtml(u.last_login||'')}</td><td>${actions}</td></tr>`}
 async function approve(btn,id,role){if(await withLoading(btn,()=>api('/api/users/approve',{user_id:id,role})))load()}
 async function rejectUser(btn,id){if(await withLoading(btn,()=>api('/api/users/reject',{user_id:id})))load()}
 async function deactivate(btn,id){if(!await confirmDialog('Deactivate this user?'))return;if(await withLoading(btn,()=>api('/api/users/deactivate',{user_id:id})))load()}

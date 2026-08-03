@@ -1,32 +1,31 @@
-<!doctype html>
-<html>
-<head><title>Request Access</title>
-<style>
-body{font-family:Arial,sans-serif;background:#f4f6fb;margin:0;color:#1f2937}
-header{background:#305496;color:white;padding:18px 28px;display:flex;justify-content:space-between;align-items:center}
-header a{color:white;font-weight:700;margin-left:14px}
-main{max-width:1100px;margin:0 auto;padding:20px}
-.card{background:white;border:1px solid #d9e2ef;border-radius:14px;padding:16px;box-shadow:0 4px 16px rgba(15,23,42,.06);margin-bottom:16px}
-input{padding:10px;border:1px solid #d9e2ef;border-radius:9px;font:inherit;width:100%;box-sizing:border-box}
-label{display:flex;flex-direction:column;gap:6px;font-weight:700;margin:8px 0}
-button{background:#305496;color:white;border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
-button:disabled{opacity:.65;cursor:not-allowed}.muted{color:#64748b;font-size:13px}.error{color:#991b1b;font-weight:700}.success{color:#166534;font-weight:700}
-</style>
-</head>
-<body>
-<header><h2>Request Access</h2><div><a href="/login">Login</a></div></header>
-<main>
-  <div class="card" style="max-width:520px;margin:40px auto;">
-    <h2>Create access request</h2>
-    <p class="muted">Your account will be pending until an Admin or Super Admin approves it.</p>
-    <label>Name<input id="signup_name" autocomplete="name"></label>
-    <label>Email<input id="signup_email" autocomplete="email"></label>
-    <label>Password<input id="signup_password" type="password" autocomplete="new-password"></label>
-    <label>Department<input id="signup_department"></label>
-    <button id="signup_btn" onclick="signupRequest()">Submit Request</button>
-    <p id="signup_msg" class="muted"></p>
+<!doctype html><html><head><title>Request Access</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head><body>
+<div class="authgrid">
+  <div class="authside">
+    <div style="font-family:var(--font-heading);font-weight:600;font-size:20px">Intern Tracker</div>
+    <div>
+      <div class="kicker" style="color:color-mix(in srgb, var(--color-bg) 70%, transparent)">Operations console</div>
+      <h1>Every request, reviewed before it touches the workbook.</h1>
+      <p style="font-size:14px;opacity:.75;max-width:34ch">New accounts stay pending until an Admin or Super Admin approves them.</p>
+    </div>
+    <div style="font-size:11px;opacity:.5">Industry theme</div>
   </div>
-</main>
+  <div class="authmain">
+    <div class="card blueprint elev-sm authcard" style="width:min(480px,100%)">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 4px">Create access request</h3>
+      <p class="muted">Your account will be pending until an Admin or Super Admin approves it.</p>
+      <div class="field"><label>Name</label><input id="signup_name" autocomplete="name"></div>
+      <div class="field"><label>Email</label><input id="signup_email" autocomplete="email"></div>
+      <div class="field"><label>Password</label><input id="signup_password" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>Department</label><input id="signup_department"></div>
+      <button id="signup_btn" class="btn btn-primary btn-block" onclick="signupRequest()">Submit Request</button>
+      <p id="signup_msg" class="muted"></p>
+      <p class="muted" style="margin-top:10px"><a href="/login">Back to login</a></p>
+    </div>
+  </div>
+</div>
 <script>
 function byId(id) { return document.getElementById(id); }
 function getVal(id) { const el = byId(id); return el ? String(el.value || '').trim() : ''; }
@@ -72,5 +71,4 @@ async function signupRequest() {
   }
 }
 </script>
-</body>
-</html>
+</body></html>

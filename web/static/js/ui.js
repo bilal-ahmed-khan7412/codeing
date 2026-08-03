@@ -32,9 +32,10 @@ function confirmDialog(message) {
     const actions = document.createElement('div');
     actions.className = 'confirm-actions';
     const yes = document.createElement('button');
-    yes.className = 'danger';
+    yes.className = 'btn btn-danger';
     yes.textContent = 'Confirm';
     const no = document.createElement('button');
+    no.className = 'btn btn-secondary';
     no.textContent = 'Cancel';
     actions.appendChild(yes);
     actions.appendChild(no);

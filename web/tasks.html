@@ -1,8 +1,33 @@
 <!doctype html><html><head><title>Task Tracker</title>
 <link rel="stylesheet" href="/static/css/app.css">
 </head><body>
-<header><h2>Task Tracker</h2><div id="nav"></div></header>
-<main><div class="card"><h3>Create Task</h3><div class="grid-2"><label>Title<input id="title"></label><label>Assigned To<input id="assigned_to"></label><label>Category<select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></label><label>Priority<select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></label><label>Status<select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></label><label>Due Date<input id="due_date"></label></div><label>Description<textarea id="description"></textarea></label><label>Remarks<textarea id="remarks"></textarea></label><button onclick="addTask()">Add Task</button></div><div class="card"><h3>Tasks</h3><table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Due</th><th>Remarks</th></tr></thead><tbody id="rows"></tbody></table></div></main>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="kicker">Team</div>
+    <h2 style="margin:0 0 20px">Task Tracker</h2>
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 10px">Create Task</h3>
+      <div class="grid-2">
+        <div class="field"><label>Title</label><input id="title"></div>
+        <div class="field"><label>Assigned To</label><input id="assigned_to"></div>
+        <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></div>
+        <div class="field"><label>Priority</label><select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+        <div class="field"><label>Status</label><select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></div>
+        <div class="field"><label>Due Date</label><input id="due_date"></div>
+      </div>
+      <div class="field"><label>Description</label><textarea id="description"></textarea></div>
+      <div class="field"><label>Remarks</label><textarea id="remarks"></textarea></div>
+      <button onclick="addTask()">Add Task</button>
+    </div>
+    <div class="card blueprint elev-sm" style="padding:20px;overflow-x:auto">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 10px">Tasks</h3>
+      <table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Due</th><th>Remarks</th></tr></thead><tbody id="rows"></tbody></table>
+    </div>
+  </main>
+</div>
 <script src="/static/js/nav.js"></script>
 <script>
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }

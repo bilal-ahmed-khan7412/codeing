@@ -4,30 +4,27 @@
 <title>Pending Approval</title>
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
-
 <body>
-
-<header>
-    <h2>Pending Approval</h2>
+<div class="authgrid">
+  <div class="authside">
+    <div style="font-family:var(--font-heading);font-weight:600;font-size:20px">Intern Tracker</div>
     <div>
-        <a href="/login">Login</a>
+      <div class="kicker" style="color:color-mix(in srgb, var(--color-bg) 70%, transparent)">Operations console</div>
+      <h1>Almost there.</h1>
+      <p style="font-size:14px;opacity:.75;max-width:34ch">Someone with the keys just needs to look this over first.</p>
     </div>
-</header>
-
-<main>
-    <div class="card">
-        <h2>Your request is pending</h2>
-
-        <p>
-            Your access request has been submitted.
-            Please wait for an Admin or Super Admin to approve your account.
-        </p>
-
-        <div style="margin-top:20px;">
-            <a class="btn" href="/login">Back to Login</a>
-        </div>
+    <div style="font-size:11px;opacity:.5">Industry theme</div>
+  </div>
+  <div class="authmain">
+    <div class="card blueprint elev-sm authcard" style="text-align:center">
+      <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+      <h3 style="margin:0 0 8px">Your request is pending</h3>
+      <p style="font-size:14px">Your access request has been submitted. Please wait for an Admin or Super Admin to approve your account.</p>
+      <div style="margin-top:16px;">
+        <a class="btn btn-primary" href="/login">Back to Login</a>
+      </div>
     </div>
-</main>
-
+  </div>
+</div>
 </body>
 </html>
