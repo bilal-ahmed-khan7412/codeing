@@ -18,6 +18,11 @@
       <div class="card blueprint elev-sm"><div class="card-kicker">Team</div><div class="card-title">Tasks</div><p class="card-body">Manage admin task workflows.</p><a class="btn btn-secondary" href="/tasks" style="width:fit-content;margin-top:10px">Open Tasks</a></div>
       <div class="card blueprint elev-sm"><div class="card-kicker">Assessment</div><div class="card-title">Evaluation</div><p class="card-body">Run the intern evaluation workflow and generate evaluation output files.</p><a class="btn btn-secondary" href="/evaluation" style="width:fit-content;margin-top:10px">Open Evaluation</a></div>
       <div class="card blueprint elev-sm"><div class="card-kicker">Account</div><div class="card-title">Profile</div><p class="card-body">Update your own account details and password.</p><a class="btn btn-secondary" href="/profile" style="width:fit-content;margin-top:10px">Open Profile</a></div>
+      <div class="card blueprint elev-sm">
+        <div class="card-kicker">Team</div>
+        <div class="card-title">My Open Tickets</div>
+        <div id="myTickets" class="card-body">Loading...</div>
+      </div>
     </div>
   </main>
 </div>
@@ -36,7 +41,34 @@ async function loadMe(){
     document.getElementById('userEmail').textContent = 'Could not load your profile. Try refreshing the page.';
   }
 }
+function escapeHtmlHome(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function loadMyTickets(){
+  const box = document.getElementById('myTickets');
+  try{
+    const meRes = await fetch('/api/me');
+    const me = (await meRes.json()).user || {};
+    const r = await fetch('/api/tasks');
+    const d = await r.json();
+    const mine = (d.tasks||[]).filter(t => t.assigned_to === me.name && !['Completed','Cancelled'].includes(t.status));
+    if(!mine.length){ box.textContent = 'No open tickets assigned to you.'; return; }
+    box.innerHTML = mine.map(t => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid color-mix(in srgb, var(--color-text) 12%, transparent)">
+        <div>
+          <div style="font-weight:600">${escapeHtmlHome(t.title)}</div>
+          <div style="font-size:12px;opacity:.75">${escapeHtmlHome(t.priority)} &middot; Due ${escapeHtmlHome(t.due_date) || '—'}</div>
+        </div>
+        <button class="btn btn-secondary" onclick="markTicketDone(${t.id})">Mark Completed</button>
+      </div>`).join('');
+  }catch(e){
+    box.textContent = 'Could not load tickets.';
+  }
+}
+async function markTicketDone(id){
+  await fetch(`/api/tasks/${id}/status`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'Completed'})});
+  loadMyTickets();
+}
 loadMe();
+loadMyTickets();
 renderNav();
 </script>
 </body></html>

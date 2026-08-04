@@ -21,7 +21,10 @@
         </div>
         <p id="uploadStatus" class="muted" aria-live="polite" style="margin-top:6px"></p>
       </div>
-      <button class="btn btn-secondary" type="button" onclick="openFileManager()" style="margin-top:6px">Manage Files</button>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <button class="btn btn-secondary" type="button" onclick="downloadCurrentWorkbook()">Download Selected</button>
+        <button class="btn btn-secondary" type="button" onclick="openFileManager()">Manage Files</button>
+      </div>
     </div>
 
     <div class="card blueprint elev-sm" style="padding:20px">
@@ -231,6 +234,11 @@ async function deleteMyFile(folder, name){
 function onWorkbookChange(){
   setCurrentWorkbook(document.getElementById('fileSelect').value);
   loadInternDropdowns();
+}
+function downloadCurrentWorkbook(){
+  const name = document.getElementById('fileSelect').value;
+  if(!name){ toast('Select a workbook first.', 'error'); return; }
+  window.location.href = '/download/' + encodeURIComponent(name);
 }
 async function uploadWorkbook(){
   const f=document.getElementById('uploadFile').files[0];

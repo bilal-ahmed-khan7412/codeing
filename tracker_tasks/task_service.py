@@ -12,11 +12,21 @@ class TaskService:
     def __init__(self):
         init_db()
 
-    def list_tasks(self):
+    def list_tasks(self, assigned_to=None):
         conn = get_conn()
-        rows = conn.execute('SELECT * FROM task_tracker ORDER BY id DESC').fetchall()
+        if assigned_to:
+            rows = conn.execute('SELECT * FROM task_tracker WHERE assigned_to=? ORDER BY id DESC', (assigned_to,)).fetchall()
+        else:
+            rows = conn.execute('SELECT * FROM task_tracker ORDER BY id DESC').fetchall()
         conn.close()
         return rows_to_dicts(rows)
+
+    def get_task(self, task_id):
+        conn = get_conn()
+        rows = conn.execute('SELECT * FROM task_tracker WHERE id=?', (task_id,)).fetchall()
+        conn.close()
+        result = rows_to_dicts(rows)
+        return result[0] if result else None
 
     def create_task(self, data, user=None):
         user = user or {}

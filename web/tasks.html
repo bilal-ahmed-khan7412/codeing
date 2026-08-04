@@ -6,8 +6,8 @@
   <main class="main">
     <div class="kicker">Team</div>
     <h2 style="margin:0 0 20px">Ticket Tracker</h2>
-    <div class="card blueprint elev-sm" style="padding:20px">
-      
+    <div class="card blueprint elev-sm" style="padding:20px" id="createCard">
+
       <h3 style="margin:0 0 10px">Create Ticket</h3>
       <div class="grid-2">
         <div class="field"><label>Title</label><input id="title"></div>
@@ -30,8 +30,18 @@
 </div>
 <script src="/static/js/nav.js"></script>
 <script>
+const STATUS_OPTIONS = ['Pending','In Progress','Blocked','Completed','Cancelled'];
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-async function load(){const r=await fetch('/api/tasks');const d=await r.json();rows.innerHTML=(d.tasks||[]).map(t=>`<tr><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${escapeHtml(t.status)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.due_date)}</td><td>${escapeHtml(t.remarks)}</td></tr>`).join('')}
+function statusSelectHtml(t){
+  return `<select onchange="updateStatus(${t.id}, this.value)">${STATUS_OPTIONS.map(s=>`<option${s===t.status?' selected':''}>${s}</option>`).join('')}</select>`;
+}
+async function load(){const r=await fetch('/api/tasks');const d=await r.json();rows.innerHTML=(d.tasks||[]).map(t=>`<tr><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${statusSelectHtml(t)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.due_date)}</td><td>${escapeHtml(t.remarks)}</td></tr>`).join('')}
+async function updateStatus(id, newStatus){
+  const r=await fetch(`/api/tasks/${id}/status`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:newStatus})});
+  const d=await r.json();
+  if(!d.ok){ alert(d.error || 'Could not update status.'); }
+  load();
+}
 async function loadAssignees(){
   try{
     const r=await fetch('/api/users');
@@ -40,8 +50,17 @@ async function loadAssignees(){
     assigned_to.innerHTML='<option value="">Unassigned</option>'+users.map(u=>`<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`).join('');
   }catch(e){}
 }
-async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:assigned_to.value,due_date:due_date.value,remarks:remarks.value})});load()}load();
-loadAssignees();
-renderNav();
+async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:assigned_to.value,due_date:due_date.value,remarks:remarks.value})});load()}
+async function init(){
+  const user = await renderNav();
+  const isAdmin = user && (user.role === 'Admin' || user.role === 'Super Admin');
+  if(isAdmin){
+    loadAssignees();
+  } else {
+    document.getElementById('createCard').style.display = 'none';
+  }
+  load();
+}
+init();
 </script>
 </body></html>

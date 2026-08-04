@@ -255,8 +255,6 @@ def tasks_page(request: Request):
     user = current_user_from_request(request)
     if not user:
         return RedirectResponse('/login')
-    if not v65_is_admin_or_super(user):
-        return RedirectResponse('/chat')
     return (BASE_DIR / 'web' / 'tasks.html').read_text(encoding='utf-8')
 
 @app.get('/api/users')
@@ -311,9 +309,9 @@ def api_logs_export(request: Request):
 @app.get('/api/tasks')
 def api_tasks(request: Request):
     user = require_login(request)
-    if not v65_is_admin_or_super(user):
-        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin or Super Admin only'})
-    return {'ok': True, 'tasks': task_service.list_tasks()}
+    if v65_is_admin_or_super(user):
+        return {'ok': True, 'tasks': task_service.list_tasks()}
+    return {'ok': True, 'tasks': task_service.list_tasks(assigned_to=user.get('name', ''))}
 
 @app.post('/api/tasks')
 def api_create_task(request: Request, payload: dict):
@@ -322,6 +320,25 @@ def api_create_task(request: Request, payload: dict):
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin or Super Admin only'})
     task_service.create_task(payload, user)
     audit_service.log(user, interface='Tasks', action='Create Task', target_type='Task', target_name=payload.get('title',''), status='Success')
+    return {'ok': True}
+
+_TASK_STATUS_VALUES = {'Pending', 'In Progress', 'Blocked', 'Completed', 'Cancelled'}
+
+@app.post('/api/tasks/{task_id}/status')
+def api_update_task_status(request: Request, task_id: int, payload: dict):
+    user = require_login(request)
+    task = task_service.get_task(task_id)
+    if not task:
+        return JSONResponse(status_code=404, content={'ok': False, 'error': 'Ticket not found'})
+    if not (v65_is_admin_or_super(user) or task.get('assigned_to') == user.get('name')):
+        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Not allowed'})
+    new_status = payload.get('status')
+    if new_status not in _TASK_STATUS_VALUES:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': 'Invalid status'})
+    old_status = task.get('status')
+    merged = {**task, 'status': new_status}
+    task_service.update_task(task_id, merged)
+    audit_service.log(user, interface='Tasks', action='Update Ticket Status', target_type='Task', target_name=task.get('title', ''), status='Success', summary=f'{old_status} -> {new_status}')
     return {'ok': True}
 
 @app.get("/")
