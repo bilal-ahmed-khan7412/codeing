@@ -1,11 +1,11 @@
-<!doctype html><html><head><title>Ticket Tracker</title>
+<!doctype html><html><head><title>Create Ticket</title>
 <link rel="stylesheet" href="/static/css/app.css">
 </head><body>
 <div class="appshell">
   <aside class="sidebar" id="sidebar"></aside>
   <main class="main">
     <div class="kicker">Team</div>
-    <h2 style="margin:0 0 20px">Ticket Tracker</h2>
+    <h2 style="margin:0 0 20px">Create Ticket</h2>
     <div class="card blueprint elev-sm" style="padding:20px" id="createCard">
 
       <h3 style="margin:0 0 10px">Create Ticket</h3>
@@ -16,9 +16,10 @@
         <div class="field"><label>Status</label><select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></div>
         <div class="field"><label>Due Date</label><input type="date" id="due_date"></div>
       </div>
-      <div class="field"><label>Description</label><textarea id="description"></textarea></div>
+      <div class="field"><label>Description</label><textarea id="description" maxlength="200"></textarea></div>
       <div class="field"><label>Remarks</label><textarea id="remarks"></textarea></div>
       <button onclick="addTask()">Add Ticket</button>
+      <p id="createMsg"></p>
     </div>
     <div class="card blueprint elev-sm" style="padding:20px" id="requestKeyCard">
       <h3 style="margin:0 0 10px">Request API Key</h3>
@@ -27,42 +28,23 @@
       <button onclick="requestApiKey()">Request API Key</button>
       <p id="apiKeyMsg"></p>
     </div>
-    <div class="card blueprint elev-sm" style="padding:20px;overflow-x:auto">
-      
-      <h3 style="margin:0 0 10px">Tickets</h3>
-      <table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Due</th><th>Remarks</th></tr></thead><tbody id="rows"></tbody></table>
-    </div>
   </main>
 </div>
 <script src="/static/js/nav.js"></script>
 <script>
-const STATUS_OPTIONS = ['Pending','In Progress','Blocked','Completed','Cancelled'];
-function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-function statusSelectHtml(t){
-  return `<select onchange="updateStatus(${t.id}, this.value)">${STATUS_OPTIONS.map(s=>`<option${s===t.status?' selected':''}>${s}</option>`).join('')}</select>`;
-}
-async function load(){const r=await fetch('/api/tasks');const d=await r.json();rows.innerHTML=(d.tasks||[]).map(t=>`<tr><td>${t.id}</td><td>${escapeHtml(t.title)}</td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${statusSelectHtml(t)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.due_date)}</td><td>${escapeHtml(t.remarks)}</td></tr>`).join('')}
-async function updateStatus(id, newStatus){
-  const r=await fetch(`/api/tasks/${id}/status`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:newStatus})});
+async function addTask(){
+  if(!title.value.trim()){ createMsg.textContent='Title is required.'; return; }
+  const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:'',due_date:due_date.value,remarks:remarks.value})});
   const d=await r.json();
-  if(!d.ok){ alert(d.error || 'Could not update status.'); }
-  load();
+  createMsg.textContent=d.ok?'Ticket created.':(d.error||'Error');
+  if(d.ok){ title.value=''; description.value=''; remarks.value=''; due_date.value=''; }
 }
-async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:'',due_date:due_date.value,remarks:remarks.value})});load()}
 async function requestApiKey(){
   const r=await fetch('/api/tasks/request-api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:apiKeyNote.value})});
   const d=await r.json();
   apiKeyMsg.textContent=d.ok?'Requested - an admin will follow up.':(d.error||'Error');
-  if(d.ok){ apiKeyNote.value=''; load(); }
+  if(d.ok){ apiKeyNote.value=''; }
 }
-async function init(){
-  const user = await renderNav();
-  const isAdmin = user && (user.role === 'Admin' || user.role === 'Super Admin');
-  if(!isAdmin){
-    document.getElementById('createCard').style.display = 'none';
-  }
-  load();
-}
-init();
+renderNav();
 </script>
 </body></html>

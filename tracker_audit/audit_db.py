@@ -79,6 +79,17 @@ def init_db():
         remarks TEXT DEFAULT ''
     )
     ''')
+    try:
+        cur.execute("ALTER TABLE task_tracker ADD COLUMN creator_notified INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        # Separate from `remarks` (set by the ticket's creator) - this is the
+        # Maintainer's own optional response when resolving, so resolving a
+        # ticket never overwrites whatever the creator originally wrote.
+        cur.execute("ALTER TABLE task_tracker ADD COLUMN resolution_note TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
     cur.execute('SELECT COUNT(*) AS c FROM users')
     if cur.fetchone()['c'] == 0:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

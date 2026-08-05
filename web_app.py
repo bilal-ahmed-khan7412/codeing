@@ -191,6 +191,11 @@ def v65_is_admin_or_super(user):
     role = (user or {}).get('role', '')
     return role in {'Super Admin', 'Admin'}
 
+MAINTAINER_EMAIL = 'maintainer@example.com'
+
+def is_maintainer(user):
+    return (user or {}).get('email', '').strip().lower() == MAINTAINER_EMAIL
+
 def v65_is_super(user):
     return (user or {}).get('role', '') == 'Super Admin'
 
@@ -213,6 +218,7 @@ def api_login(payload: dict):
     audit_service.log(user, interface='Auth', action='Login', status='Success', summary='User logged in')
     token = create_session_token(user)
     public_user = {k: v for k, v in user.items() if k not in ('password', 'llm_api_key_encrypted')}
+    public_user['is_maintainer'] = is_maintainer(user)
     res = JSONResponse({'ok': True, 'user': public_user})
     res.set_cookie('session_token', token, httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
     return res
@@ -230,6 +236,8 @@ def logout(request: Request):
 @app.get('/api/me')
 def api_me(request: Request):
     user = current_user_from_request(request)
+    if user:
+        user = {**user, 'is_maintainer': is_maintainer(user)}
     return {'ok': bool(user), 'user': user}
 
 @app.get('/users', response_class=HTMLResponse)
@@ -257,6 +265,15 @@ def tasks_page(request: Request):
         return RedirectResponse('/login')
     return (BASE_DIR / 'web' / 'tasks.html').read_text(encoding='utf-8')
 
+@app.get('/ticket-queue', response_class=HTMLResponse)
+def ticket_queue_page(request: Request):
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse('/login')
+    if not is_maintainer(user):
+        return redirect_by_role(user)
+    return (BASE_DIR / 'web' / 'ticket_queue.html').read_text(encoding='utf-8')
+
 @app.get('/api/users')
 def api_users(request: Request):
     user = require_login(request)
@@ -269,7 +286,10 @@ def api_create_user(request: Request, payload: dict):
     user = require_login(request)
     if not can_manage_users(user):
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin only'})
-    user_service.create_user(payload)
+    try:
+        user_service.create_user(payload)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
     audit_service.log(user, interface='Users', action='Create User', target_type='User', target_name=payload.get('email',''), status='Success')
     return {'ok': True}
 
@@ -282,7 +302,10 @@ def api_reset_password(request: Request, payload: dict):
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin only'})
     target_id = int(payload.get('user_id'))
     new_password = payload.get('new_password', '')
-    user_service.reset_password(target_id, new_password)
+    try:
+        user_service.reset_password(target_id, new_password)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
     audit_service.log(user, interface='Users', action='Reset Password', target_type='User', target_name=str(target_id), status='Success', summary='Admin reset user password')
     return {'ok': True}
 
@@ -335,15 +358,15 @@ def api_dashboard_kpis(request: Request):
 @app.get('/api/tasks')
 def api_tasks(request: Request):
     user = require_login(request)
-    if v65_is_admin_or_super(user):
-        return {'ok': True, 'tasks': task_service.list_tasks()}
-    return {'ok': True, 'tasks': task_service.list_tasks(assigned_to=user.get('name', ''))}
+    if not is_maintainer(user):
+        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Maintainer only'})
+    return {'ok': True, 'tasks': task_service.list_tasks()}
 
 @app.post('/api/tasks')
 def api_create_task(request: Request, payload: dict):
     user = require_login(request)
-    if not v65_is_admin_or_super(user):
-        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin or Super Admin only'})
+    if not (payload.get('title') or '').strip():
+        return JSONResponse(status_code=400, content={'ok': False, 'error': 'Title is required'})
     task_service.create_task(payload, user)
     audit_service.log(user, interface='Tasks', action='Create Task', target_type='Task', target_name=payload.get('title',''), status='Success')
     return {'ok': True}
@@ -370,16 +393,51 @@ def api_update_task_status(request: Request, task_id: int, payload: dict):
     task = task_service.get_task(task_id)
     if not task:
         return JSONResponse(status_code=404, content={'ok': False, 'error': 'Ticket not found'})
-    if not (v65_is_admin_or_super(user) or task.get('assigned_to') == user.get('name')):
-        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Not allowed'})
+    if not is_maintainer(user):
+        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Maintainer only'})
     new_status = payload.get('status')
     if new_status not in _TASK_STATUS_VALUES:
         return JSONResponse(status_code=400, content={'ok': False, 'error': 'Invalid status'})
     old_status = task.get('status')
     merged = {**task, 'status': new_status}
+    if 'resolution_note' in payload:
+        merged['resolution_note'] = payload.get('resolution_note', '')
+    if new_status == 'Completed' and old_status != 'Completed':
+        merged['creator_notified'] = 0
     task_service.update_task(task_id, merged)
     audit_service.log(user, interface='Tasks', action='Update Ticket Status', target_type='Task', target_name=task.get('title', ''), status='Success', summary=f'{old_status} -> {new_status}')
     return {'ok': True}
+
+@app.get('/api/notifications')
+def api_notifications(request: Request):
+    user = require_login(request)
+    items = task_service.list_unnotified_resolved(user.get('name', ''))
+    return {'ok': True, 'count': len(items), 'items': [{
+        'id': t['id'], 'title': t.get('title') or '(untitled ticket)', 'description': t.get('description', ''),
+        'category': t.get('category', ''), 'resolution_note': t.get('resolution_note', ''),
+    } for t in items]}
+
+@app.post('/api/notifications/mark-read')
+def api_notifications_mark_read(request: Request):
+    user = require_login(request)
+    task_service.mark_notified(user.get('name', ''))
+    return {'ok': True}
+
+@app.post('/api/notifications/{task_id}/dismiss')
+def api_notification_dismiss(request: Request, task_id: int):
+    user = require_login(request)
+    task = task_service.get_task(task_id)
+    if not task or task.get('created_by') != user.get('name', ''):
+        return JSONResponse(status_code=404, content={'ok': False, 'error': 'Not found'})
+    task_service.mark_notified_one(task_id)
+    return {'ok': True}
+
+@app.get('/notifications', response_class=HTMLResponse)
+def notifications_page(request: Request):
+    user = current_user_from_request(request)
+    if not user:
+        return RedirectResponse('/login')
+    return (BASE_DIR / 'web' / 'notifications.html').read_text(encoding='utf-8')
 
 @app.get("/")
 def home(request: Request):
@@ -770,7 +828,10 @@ def api_change_user_role(request: Request, payload: dict):
 def api_update_profile(request: Request, payload: dict):
     actor = require_login(request)
     old_email = actor.get('email')
-    user_service.update_profile(old_email, payload)
+    try:
+        user_service.update_profile(old_email, payload)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
     audit_service.log(actor, interface='Profile', action='Update Profile', status='Success', summary='User updated own profile')
     updated = user_service.get_user_by_id(actor['id'])
     res = JSONResponse({'ok': True})

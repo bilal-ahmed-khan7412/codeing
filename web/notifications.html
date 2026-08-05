@@ -1,0 +1,48 @@
+<!doctype html><html><head><title>Notifications</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head><body>
+<div class="appshell">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <div class="kicker">Account</div>
+    <h2 style="margin:0 0 20px">Notifications</h2>
+    <div class="card blueprint elev-sm" style="padding:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 style="margin:0">Resolved Tickets</h3>
+        <button class="btn btn-secondary" onclick="markAllRead()">Mark all read</button>
+      </div>
+      <div id="notifList">Loading...</div>
+    </div>
+  </main>
+</div>
+<script src="/static/js/nav.js"></script>
+<script>
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function load(){
+  const r = await fetch('/api/notifications');
+  const d = await r.json();
+  const box = document.getElementById('notifList');
+  if(!d.items || !d.items.length){ box.textContent = 'No new notifications.'; return; }
+  box.innerHTML = d.items.map(i => `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid color-mix(in srgb, var(--color-text) 10%, transparent)">
+      <div>
+        <div style="font-weight:600">${escapeHtml(i.title)}${i.category ? ` <span class="tag tag-outline" style="margin-left:4px;font-weight:400">${escapeHtml(i.category)}</span>` : ''}</div>
+        <div class="muted" style="margin-top:2px">Resolved</div>
+        ${i.description ? `<div style="margin-top:6px;font-size:13px">You reported: ${escapeHtml(i.description)}</div>` : ''}
+        ${i.resolution_note ? `<div style="margin-top:6px;font-size:13px"><b>Response:</b> ${escapeHtml(i.resolution_note)}</div>` : ''}
+      </div>
+      <button class="btn btn-secondary" onclick="dismiss(${i.id})" style="flex:none">Dismiss</button>
+    </div>`).join('');
+}
+async function dismiss(id){
+  await fetch(`/api/notifications/${id}/dismiss`, {method:'POST'});
+  load();
+}
+async function markAllRead(){
+  await fetch('/api/notifications/mark-read', {method:'POST'});
+  load();
+}
+load();
+renderNav();
+</script>
+</body></html>

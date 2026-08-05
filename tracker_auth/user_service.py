@@ -10,6 +10,11 @@ def now():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
+def _validate_password_length(password: str):
+    if len(password) < 8 or len(password) > 12:
+        raise ValueError('Password must be between 8 and 12 characters long.')
+
+
 # Login rate-limiting policy. Single-process app (not horizontally
 # scaled), so an in-memory tracker is sufficient - no Redis/DB table
 # needed. Keyed by lowercased email so this doesn't depend on trusting
@@ -85,6 +90,8 @@ class UserService:
         return rows_to_dicts(rows)
 
     def create_user(self, data: dict):
+        if data.get('password'):
+            _validate_password_length(data['password'])
         conn = get_conn()
         conn.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
                         VALUES(?,?,?,?,?,?,?)''', (
@@ -103,6 +110,7 @@ class UserService:
     def reset_password(self, user_id: int, new_password: str):
         if not new_password:
             raise ValueError('new_password is required')
+        _validate_password_length(new_password)
         conn = get_conn()
         conn.execute('UPDATE users SET password=? WHERE id=?', (hash_password(new_password), user_id))
         conn.commit()
@@ -184,8 +192,7 @@ class UserService:
             raise ValueError('Name, email, and password are required.')
         if '@' not in email:
             raise ValueError('Please enter a valid email address.')
-        if len(password) < 8:
-            raise ValueError('Password must be at least 8 characters long.')
+        _validate_password_length(password)
         conn = get_conn()
         existing = conn.execute('SELECT email,status,role FROM users WHERE lower(email)=lower(?)', (email,)).fetchone()
         if existing:
@@ -236,6 +243,7 @@ class UserService:
         if data.get('department'):
             fields.append('department=?'); values.append(data['department'].strip())
         if data.get('password'):
+            _validate_password_length(data['password'])
             fields.append('password=?'); values.append(hash_password(data['password']))
         # Presence check, not truthiness - this is a boolean toggle, and a
         # truthy-only check would make it impossible to ever turn back off.
