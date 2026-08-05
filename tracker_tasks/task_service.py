@@ -49,15 +49,15 @@ class TaskService:
         conn.commit()
         conn.close()
 
-    def list_unnotified_resolved(self, created_by):
+    def list_unnotified_status_changes(self, created_by):
         conn = get_conn()
-        rows = conn.execute("SELECT * FROM task_tracker WHERE created_by=? AND status='Completed' AND creator_notified=0 ORDER BY id DESC", (created_by,)).fetchall()
+        rows = conn.execute("SELECT * FROM task_tracker WHERE created_by=? AND status IN ('Completed','Blocked','Cancelled') AND creator_notified=0 ORDER BY id DESC", (created_by,)).fetchall()
         conn.close()
         return rows_to_dicts(rows)
 
     def mark_notified(self, created_by):
         conn = get_conn()
-        conn.execute("UPDATE task_tracker SET creator_notified=1 WHERE created_by=? AND status='Completed' AND creator_notified=0", (created_by,))
+        conn.execute("UPDATE task_tracker SET creator_notified=1 WHERE created_by=? AND status IN ('Completed','Blocked','Cancelled') AND creator_notified=0", (created_by,))
         conn.commit()
         conn.close()
 

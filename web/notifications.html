@@ -8,7 +8,7 @@
     <h2 style="margin:0 0 20px">Notifications</h2>
     <div class="card blueprint elev-sm" style="padding:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <h3 style="margin:0">Resolved Tickets</h3>
+        <h3 style="margin:0">Ticket Updates</h3>
         <button class="btn btn-secondary" onclick="markAllRead()">Mark all read</button>
       </div>
       <div id="notifList">Loading...</div>
@@ -27,7 +27,7 @@ async function load(){
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:1px solid color-mix(in srgb, var(--color-text) 10%, transparent)">
       <div>
         <div style="font-weight:600">${escapeHtml(i.title)}${i.category ? ` <span class="tag tag-outline" style="margin-left:4px;font-weight:400">${escapeHtml(i.category)}</span>` : ''}</div>
-        <div class="muted" style="margin-top:2px">Resolved</div>
+        <div class="muted" style="margin-top:2px">${escapeHtml(i.status_text)}</div>
         ${i.description ? `<div style="margin-top:6px;font-size:13px">You reported: ${escapeHtml(i.description)}</div>` : ''}
         ${i.resolution_note ? `<div style="margin-top:6px;font-size:13px"><b>Response:</b> ${escapeHtml(i.resolution_note)}</div>` : ''}
       </div>

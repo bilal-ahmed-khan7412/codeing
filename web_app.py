@@ -387,6 +387,15 @@ def api_request_api_key(request: Request, payload: dict):
 
 _TASK_STATUS_VALUES = {'Pending', 'In Progress', 'Blocked', 'Completed', 'Cancelled'}
 
+# Which status transitions are worth notifying the requester about, and what
+# to tell them - Pending/In Progress are routine, but these three are either
+# an endpoint or something that needs the requester's attention.
+_STATUS_NOTIFY_MESSAGES = {
+    'Completed': 'was resolved',
+    'Blocked': 'is blocked - it may need more info from you',
+    'Cancelled': 'was cancelled',
+}
+
 @app.post('/api/tasks/{task_id}/status')
 def api_update_task_status(request: Request, task_id: int, payload: dict):
     user = require_login(request)
@@ -402,7 +411,7 @@ def api_update_task_status(request: Request, task_id: int, payload: dict):
     merged = {**task, 'status': new_status}
     if 'resolution_note' in payload:
         merged['resolution_note'] = payload.get('resolution_note', '')
-    if new_status == 'Completed' and old_status != 'Completed':
+    if new_status in _STATUS_NOTIFY_MESSAGES and old_status != new_status:
         merged['creator_notified'] = 0
     task_service.update_task(task_id, merged)
     audit_service.log(user, interface='Tasks', action='Update Ticket Status', target_type='Task', target_name=task.get('title', ''), status='Success', summary=f'{old_status} -> {new_status}')
@@ -411,10 +420,11 @@ def api_update_task_status(request: Request, task_id: int, payload: dict):
 @app.get('/api/notifications')
 def api_notifications(request: Request):
     user = require_login(request)
-    items = task_service.list_unnotified_resolved(user.get('name', ''))
+    items = task_service.list_unnotified_status_changes(user.get('name', ''))
     return {'ok': True, 'count': len(items), 'items': [{
         'id': t['id'], 'title': t.get('title') or '(untitled ticket)', 'description': t.get('description', ''),
         'category': t.get('category', ''), 'resolution_note': t.get('resolution_note', ''),
+        'status': t.get('status', ''), 'status_text': _STATUS_NOTIFY_MESSAGES.get(t.get('status', ''), 'was updated'),
     } for t in items]}
 
 @app.post('/api/notifications/mark-read')
