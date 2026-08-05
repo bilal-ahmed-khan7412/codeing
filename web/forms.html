@@ -631,7 +631,12 @@ function scheduleRowHtml(w, i, editable){
   // (or a 'daily_tasks' array) instead - without this fallback the Task
   // box showed empty for those two even though the daily tasks genuinely
   // exist and appear correctly in the generated Excel.
-  const task = w.task || w.daily_task || (Array.isArray(w.daily_tasks) && w.daily_tasks[0]) || '';
+  const singleTask = w.task || w.daily_task || (Array.isArray(w.daily_tasks) && w.daily_tasks[0]) || '';
+  const rawDaily = Array.isArray(w.daily_tasks) && w.daily_tasks.length ? w.daily_tasks : [singleTask];
+  // Show a full week's worth of days - pad by repeating the last real entry
+  // rather than leaving later days blank, since a short list here almost
+  // always means "not broken into 5 yet", not "only 2 days planned".
+  const dailyTasks = [0,1,2,3,4].map(d => rawDaily[d] ?? rawDaily[rawDaily.length-1] ?? '');
   const project = w.weekly_project || '';
   const notes = w.notes || '';
   const header = `<div style="display:flex;justify-content:space-between;font-weight:600">
@@ -641,6 +646,7 @@ function scheduleRowHtml(w, i, editable){
   if(!editable){
     return `<div class="card" style="margin:8px 0;padding:12px">${header}
       <p style="margin:6px 0 0"><strong>Theme:</strong> ${escapeHtml(theme)}</p>
+      ${dailyTasks.map((t,di) => `<p style="margin:2px 0 0 12px"><strong>Day ${di+1}:</strong> ${escapeHtml(t)}</p>`).join('')}
       <p style="margin:4px 0 0"><strong>Weekly project:</strong> ${escapeHtml(project)}</p>
       <p style="margin:4px 0 0"><strong>Notes:</strong> ${escapeHtml(notes)}</p>
     </div>`;
@@ -648,10 +654,13 @@ function scheduleRowHtml(w, i, editable){
   return `<div class="card" style="margin:8px 0;padding:12px" data-week-index="${i}">${header}
     <div class="grid-2" style="margin-top:6px">
       <div class="field"><label>Theme</label><input class="sched-theme" value="${escapeHtml(theme)}"></div>
-      <div class="field"><label>Task</label><input class="sched-task" value="${escapeHtml(task)}"></div>
       <div class="field"><label>Weekly project</label><input class="sched-project" value="${escapeHtml(project)}"></div>
-      <div class="field"><label>Notes</label><input class="sched-notes" value="${escapeHtml(notes)}"></div>
     </div>
+    <div class="field">
+      <label>Daily Tasks</label>
+      ${dailyTasks.map((t,di) => `<input class="sched-task-day" data-day="${di}" value="${escapeHtml(t)}" placeholder="Day ${di+1} task" style="margin-bottom:4px">`).join('')}
+    </div>
+    <div class="field"><label>Notes</label><input class="sched-notes" value="${escapeHtml(notes)}"></div>
   </div>`;
 }
 
@@ -683,19 +692,19 @@ function collectScheduleEdits(){
   if(!rows.length) return null;
   const original = lastPreviewArgs[currentScheduleKey] || [];
   const weeks = rows.map((row, i) => {
-    const taskValue = row.querySelector('.sched-task').value;
+    const dayInputs = [...row.querySelectorAll('.sched-task-day')].sort((a,b) => +a.dataset.day - +b.dataset.day);
+    const dailyTasks = dayInputs.map(inp => inp.value);
+    const orig = original[i] || {};
     return {
-      ...(original[i] || {}),
+      ...orig,
       theme: row.querySelector('.sched-theme').value,
-      // Set every key form the backend might read for "the task" (see
-      // scheduleRowHtml's fallback chain) so the edit takes effect
-      // regardless of which schedule type this is. daily_tasks is
-      // overwritten to a single entry so every day in the week actually
-      // reflects the edit, instead of leaving stale multi-day AI content
-      // behind it.
-      task: taskValue,
-      daily_task: taskValue,
-      daily_tasks: [taskValue],
+      // Set every key the backend might read for "the task" (see
+      // scheduleRowHtml's fallback chain) so this takes effect regardless of
+      // which schedule type this is - day 1's task stands in for the
+      // singular task/daily_task fields, daily_tasks carries all 5 days.
+      task: dailyTasks[0] || '',
+      daily_task: dailyTasks[0] || '',
+      daily_tasks: dailyTasks,
       weekly_project: row.querySelector('.sched-project').value,
       notes: row.querySelector('.sched-notes').value,
     };

@@ -333,6 +333,12 @@ class PlanService:
         return tasks, weekly_reports, projects
 
     def _build_schedule_from_plan(self, plan, start, end):
+        # A plan created via Create Plan only ever stores one task description
+        # per week (single `task` column, no day-by-day breakdown) - expand it
+        # into 5 distinct progressive daily tasks the same way InternSheetDrafter
+        # does, instead of repeating that one sentence verbatim on every day of
+        # the week.
+        drafter = InternSheetDrafter()
         plan_map = {}
         for row in plan.rows:
             if not row:
@@ -345,15 +351,20 @@ class PlanService:
             task = row[2] if len(row) > 2 and row[2] else 'Task to be assigned'
             project = row[3] if len(row) > 3 and row[3] else f'Week {w}: Weekly Project'
             notes = self._clean_visible_text(row[4] if len(row) > 4 else '', '')
-            plan_map[w] = {'theme': theme, 'task': task, 'project': project, 'notes': notes}
+            plan_map[w] = {'theme': theme, 'task': task, 'daily_tasks': drafter._expand_to_daily_tasks(task, theme), 'project': project, 'notes': notes}
         tasks=[]; week_dates={}; current=start; workday_count=0
+        week_day_index = {}
         while current.date() <= end.date():
             if current.weekday() < 5:
                 workday_count += 1
                 week = ((workday_count - 1)//5)+1
-                item = plan_map.get(week, {'theme':'Learning Plan','task':'Task to be assigned','project':f'Week {week}: Weekly Project','notes':''})
+                item = plan_map.get(week) or {'theme': 'Learning Plan', 'task': 'Task to be assigned', 'daily_tasks': drafter._expand_to_daily_tasks('Task to be assigned', 'Learning Plan'), 'project': f'Week {week}: Weekly Project', 'notes': ''}
                 week_dates.setdefault(week, []).append(current)
-                tasks.append([current, week, item['theme'], item['task'], 'Pending', ''])
+                idx = week_day_index.get(week, 0)
+                daily_list = item.get('daily_tasks') or [item.get('task', 'Task to be assigned')]
+                task_text = daily_list[idx] if idx < len(daily_list) else daily_list[-1]
+                week_day_index[week] = idx + 1
+                tasks.append([current, week, item['theme'], task_text, 'Pending', ''])
             current += timedelta(days=1)
         weekly_reports=[]; projects=[]
         for week, dates in sorted(week_dates.items()):

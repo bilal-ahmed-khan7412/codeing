@@ -161,6 +161,8 @@ Quality rules:
 - Create exactly {week_count} week objects.
 - Each week must include daily_tasks as a list of 5 progressive, specific, hands-on tasks relevant to {plan_name}. Each day should build on the previous day.
 - Each weekly_project must be a concrete deliverable.
+- The weeks as a whole must escalate across the entire internship, not just within a week: early weeks cover fundamentals and setup, middle weeks apply and integrate skills into more complex, realistic work, and the final week(s) focus specifically on completing, polishing, and presenting the main project.
+- No two weeks may share a similar or repeated theme, daily_tasks, or weekly_project - every week must be clearly more advanced than every earlier week and must build on what was covered before it.
 - Never use these phrases: task to be assigned, core concepts, hands-on practice, final demo, foundation and environment setup, LLM returned no detailed weeks, generated safe draft.
 - If plan context is generic, improve it into a strong {plan_name} internship plan.
 """
@@ -177,6 +179,7 @@ Quality rules:
         if not isinstance(weeks, list) or len(weeks) < week_count:
             return False
         bad = ['task to be assigned', 'core concepts', 'hands-on practice', 'final demo', 'foundation and environment setup', 'llm returned no detailed weeks', 'generated safe draft']
+        seen_themes = set()
         for w in weeks[:week_count]:
             if not isinstance(w, dict):
                 return False
@@ -192,6 +195,14 @@ Quality rules:
                 return False
             if len(str(w.get('weekly_project', '')).strip()) < 20:
                 return False
+            # Reject a draft that just repeats the same week theme instead of
+            # escalating across the internship - forces the fallback path
+            # (which itself never literally repeats) rather than accepting
+            # near-identical weeks from a lazy LLM response.
+            theme_key = str(w.get('theme', '')).strip().lower()
+            if theme_key and theme_key in seen_themes:
+                return False
+            seen_themes.add(theme_key)
         return True
 
     def _merge_dates(self, data: dict, week_ranges: list[dict]) -> dict:
@@ -309,7 +320,25 @@ Quality rules:
                 'deliverable': 'Working demo, notes, and final summary report.',
             }
         weeks = []
+        n = len(week_ranges)
+        progressive = base[:-1]  # every theme except the final "wrap up the project" one
         for i, wr in enumerate(week_ranges):
-            b = base[i % len(base)]
-            weeks.append({'week': wr['week'], 'date_range': wr['date_range'], 'theme': b[0], 'daily_task': b[1], 'daily_tasks': self._fallback_daily_tasks(b[0], b[1], b[2]), 'weekly_project': b[2], 'notes': b[3]})
+            if n <= len(base):
+                # Short enough plan - the base list already ends on the final
+                # project theme, so a plain index-through covers it exactly.
+                theme, daily_task, weekly_project, notes = base[i]
+            elif i == n - 1:
+                # Longer plan - always land the true last week on the final
+                # project theme, regardless of where the cycle below is at.
+                theme, daily_task, weekly_project, notes = base[-1]
+            else:
+                cycle = i // len(progressive)
+                theme, daily_task, weekly_project, notes = progressive[i % len(progressive)]
+                if cycle > 0:
+                    # Repeating the 8-theme cycle for a long plan - escalate
+                    # instead of silently repeating the same week verbatim.
+                    theme = f"{theme} (Advanced Round {cycle + 1})"
+                    daily_task = f"Deepen and extend: {daily_task} Apply this at a more advanced level than the earlier pass, with less guidance and higher expectations."
+                    weekly_project = f"Advanced iteration: {weekly_project} Extend the scope and complexity beyond the earlier version of this deliverable."
+            weeks.append({'week': wr['week'], 'date_range': wr['date_range'], 'theme': theme, 'daily_task': daily_task, 'daily_tasks': self._fallback_daily_tasks(theme, daily_task, weekly_project), 'weekly_project': weekly_project, 'notes': notes})
         return {'main_project': main, 'scenario': scenario, 'weeks': weeks}
