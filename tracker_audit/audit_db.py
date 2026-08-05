@@ -38,6 +38,11 @@ def init_db():
         cur.execute("ALTER TABLE users ADD COLUMN auto_cleanup_versions INTEGER DEFAULT 0")
     except sqlite3.OperationalError:
         pass
+    for col in ("llm_provider TEXT DEFAULT ''", "llm_api_key_encrypted TEXT DEFAULT ''", "llm_model TEXT DEFAULT ''"):
+        try:
+            cur.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass
     cur.execute('''
     CREATE TABLE IF NOT EXISTS activity_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

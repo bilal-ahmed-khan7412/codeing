@@ -44,11 +44,15 @@ class LLMIntentParser:
             except Exception:
                 self.provider = None
 
+    def _get_provider(self):
+        from tracker_llm.provider_context import current_provider
+        return current_provider.get() or self.provider
+
     def available(self) -> bool:
-        return self.provider is not None
+        return self._get_provider() is not None
 
     def parse(self, message: str, active_command: str | None = None) -> dict[str, Any] | None:
-        if not self.provider:
+        if not self._get_provider():
             return None
         command_hint = f"The user is replying to an active draft command: {active_command}. Fill missing fields for that command." if active_command else "No active draft command. Infer the best command."
         prompt = f"""
@@ -77,7 +81,7 @@ Rules:
 {{"command":"...", "args":{{...}}, "reply":"short user-facing summary"}}
 """
         try:
-            data = self.provider.complete_json(prompt)
+            data = self._get_provider().complete_json(prompt)
         except Exception:
             return None
         if not isinstance(data, dict):

@@ -55,12 +55,16 @@ class InternSheetDrafter:
             except Exception:
                 self.provider = None
 
+    def _get_provider(self):
+        from tracker_llm.provider_context import current_provider
+        return current_provider.get() or self.provider
+
     def draft(self, source: str, name: str, start_date: str, end_date: str, plan_name: str) -> dict:
         source_path = resolve_workbook_path(source)
         plan_context = self._load_plan_context(source_path, plan_name)
         week_ranges = self._week_ranges(start_date, end_date)
         week_count = len(week_ranges) or 8
-        if self.provider:
+        if self._get_provider():
             llm = self._draft_with_llm(name, start_date, end_date, plan_name, plan_context, week_count)
             if self._is_good_draft(llm, week_count):
                 return self._merge_dates(llm, week_ranges)
@@ -161,7 +165,7 @@ Quality rules:
 - If plan context is generic, improve it into a strong {plan_name} internship plan.
 """
         try:
-            data = self.provider.complete_json(prompt)
+            data = self._get_provider().complete_json(prompt)
             return data if isinstance(data, dict) else {}
         except Exception:
             return {}

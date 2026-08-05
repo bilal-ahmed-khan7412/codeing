@@ -23,6 +23,7 @@ class UserService:
     def __init__(self):
         init_db()
         self.ensure_super_admin()
+        self.ensure_maintainer()
         self._failed_logins: dict[str, list[float]] = {}
         self._locked_until: dict[str, float] = {}
 
@@ -119,9 +120,21 @@ class UserService:
 
     def get_user_by_id(self, user_id: int):
         conn = get_conn()
-        row = conn.execute('SELECT id,name,email,department,role,status,created_at,last_login,last_logout,auto_cleanup_versions FROM users WHERE id=?', (user_id,)).fetchone()
+        row = conn.execute('SELECT id,name,email,department,role,status,created_at,last_login,last_logout,auto_cleanup_versions,llm_provider,llm_model FROM users WHERE id=?', (user_id,)).fetchone()
         conn.close()
         return dict(row) if row else None
+
+    def get_user_llm_credentials(self, user_id: int):
+        conn = get_conn()
+        row = conn.execute('SELECT llm_provider,llm_api_key_encrypted,llm_model FROM users WHERE id=?', (user_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else {}
+
+    def count_users(self) -> int:
+        conn = get_conn()
+        count = conn.execute('SELECT COUNT(*) AS c FROM users').fetchone()['c']
+        conn.close()
+        return count
 
     def get_user_by_email(self, email: str):
         conn = get_conn()
@@ -139,6 +152,24 @@ class UserService:
             cur.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
                            VALUES(?,?,?,?,?,?,?)''', (
                 'Super Admin', 'superadmin@example.com', hash_password('superadmin123'), 'Management', 'Super Admin', 'Active', now()
+            ))
+        conn.commit()
+        conn.close()
+
+    def ensure_maintainer(self):
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) AS c FROM users WHERE lower(email)='maintainer@example.com'")
+        count = cur.fetchone()['c']
+        if count == 0:
+            # Fixed application-maintainer account, seeded once. Tickets no
+            # longer ask the creator to pick an assignee; an Admin-role
+            # account is enough for full ticket visibility, this just gives
+            # that a stable, dedicated identity instead of pointing at
+            # whichever admin happened to be around.
+            cur.execute('''INSERT INTO users(name,email,password,department,role,status,created_at)
+                           VALUES(?,?,?,?,?,?,?)''', (
+                'Maintainer', 'maintainer@example.com', hash_password('maintainer123'), 'Engineering', 'Admin', 'Active', now()
             ))
         conn.commit()
         conn.close()
@@ -210,6 +241,19 @@ class UserService:
         # truthy-only check would make it impossible to ever turn back off.
         if 'auto_cleanup_versions' in data:
             fields.append('auto_cleanup_versions=?'); values.append(1 if data['auto_cleanup_versions'] else 0)
+        if 'llm_provider' in data:
+            fields.append('llm_provider=?'); values.append((data['llm_provider'] or '').strip())
+        if 'llm_model' in data:
+            fields.append('llm_model=?'); values.append((data['llm_model'] or '').strip())
+        if data.get('llm_api_key'):
+            # Non-empty = set a new key. A blank field on save leaves the
+            # existing key untouched - clearing it is a separate explicit
+            # action (llm_api_key_clear) so a plain "leave it blank" submit
+            # can't accidentally wipe out an already-configured key.
+            from tracker_auth.key_crypto import encrypt_api_key
+            fields.append('llm_api_key_encrypted=?'); values.append(encrypt_api_key(data['llm_api_key']))
+        if data.get('llm_api_key_clear'):
+            fields.append('llm_api_key_encrypted=?'); values.append('')
         if not fields:
             return
         values.append(current_email)

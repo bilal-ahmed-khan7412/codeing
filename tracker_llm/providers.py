@@ -1,10 +1,10 @@
 
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 import requests
-from tracker_config.settings import Settings
+from tracker_config.settings import Settings, load_settings
 
 # The full command-routing SYSTEM_PROMPT (tracker_llm/prompts.py) interpolates all 19 command
 # schemas (required/optional args + descriptions) - real, useful context
@@ -138,3 +138,30 @@ def build_provider(settings: Settings) -> BaseLLMProvider:
     if provider == "mock":
         return MockLLMProvider()
     raise LLMProviderError(f"Unsupported AI_PROVIDER: {settings.ai_provider}")
+
+
+def build_provider_for_user(creds: dict) -> BaseLLMProvider | None:
+    """Build a provider from a user's own stored provider/API key, or None
+    if they haven't configured one (caller should fall back to the shared
+    server default in that case).
+
+    llm_base_url is deliberately never taken from the user - it's inherited
+    from the server's own .env settings. Letting a user supply an arbitrary
+    base URL for the "local" provider would let them point the server's
+    outbound HTTP request at an internal-only address (SSRF); only the API
+    key and model are user-suppliable.
+    """
+    provider_name = (creds.get('llm_provider') or '').strip().lower()
+    encrypted = creds.get('llm_api_key_encrypted') or ''
+    if not provider_name or not encrypted:
+        return None
+    from tracker_auth.key_crypto import decrypt_api_key
+    api_key = decrypt_api_key(encrypted)
+    base = load_settings('.env')
+    if provider_name == 'groq':
+        settings = replace(base, ai_provider='groq', groq_api_key=api_key, groq_model=creds.get('llm_model') or base.groq_model)
+    elif provider_name in {'local', 'openai-compatible', 'openai_compatible'}:
+        settings = replace(base, ai_provider='local', llm_api_key=api_key, llm_model=creds.get('llm_model') or base.llm_model)
+    else:
+        return None
+    return build_provider(settings)

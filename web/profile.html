@@ -18,12 +18,51 @@
       <button onclick="save()">Save</button>
       <p id="msg"></p>
     </div>
+    <div class="card blueprint elev-sm" style="padding:22px;max-width:560px;margin-top:16px">
+      <h3 style="margin:0 0 4px">AI Provider</h3>
+      <p class="muted">Optional - use your own AI provider/API key for chat and forms instead of the shared server key.</p>
+      <div class="field"><label>Provider</label>
+        <select id="llm_provider">
+          <option value="">Use server default</option>
+          <option value="groq">Groq (my own key)</option>
+          <option value="local">Local / OpenAI-compatible server (my own key)</option>
+        </select>
+      </div>
+      <div class="field"><label>Model (optional)</label><input id="llm_model" placeholder="Defaults to the server's configured model"></div>
+      <div class="field"><label>API Key</label><input id="llm_api_key" type="password" placeholder="No key set"></div>
+      <button onclick="saveLlm()">Save AI Provider</button>
+      <button onclick="clearLlmKey()" class="btn-secondary" type="button">Clear key</button>
+      <p id="llmMsg"></p>
+    </div>
   </main>
 </div>
 <script src="/static/js/nav.js"></script>
 <script>
 async function me(){const r=await fetch('/api/me');const d=await r.json();if(d.user){name.value=d.user.name||'';email.value=d.user.email||'';department.value=d.user.department||'';auto_cleanup.checked=!!d.user.auto_cleanup_versions;}};
 async function save(){const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.value,email:email.value,department:department.value,password:password.value,auto_cleanup_versions:auto_cleanup.checked})});const d=await r.json();msg.textContent=d.ok?'Saved.':(d.error||'Error');}me();
+async function loadLlmPreview(){
+  const r=await fetch('/api/profile/llm-key-preview');
+  const d=await r.json();
+  if(!d.ok) return;
+  llm_provider.value=d.llm_provider||'';
+  llm_model.value=d.llm_model||'';
+  llm_api_key.placeholder=d.has_key?`Currently set: ${d.masked} - leave blank to keep`:'No key set';
+}
+async function saveLlm(){
+  const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_provider:llm_provider.value,llm_model:llm_model.value,llm_api_key:llm_api_key.value})});
+  const d=await r.json();
+  llmMsg.textContent=d.ok?'Saved.':(d.error||'Error');
+  llm_api_key.value='';
+  await loadLlmPreview();
+}
+async function clearLlmKey(){
+  const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_api_key_clear:true})});
+  const d=await r.json();
+  llmMsg.textContent=d.ok?'Key cleared.':(d.error||'Error');
+  llm_api_key.value='';
+  await loadLlmPreview();
+}
+loadLlmPreview();
 renderNav();
 </script>
 </body></html>

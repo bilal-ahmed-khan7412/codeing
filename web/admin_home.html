@@ -11,6 +11,12 @@
       <p class="text-muted" id="userEmail" style="margin:0"></p>
       <p style="margin:10px 0 0;font-size:14px">Approve normal users, review logs, run the chat assistant, and run evaluations.</p>
     </div>
+    <div class="grid" id="kpiGrid" style="grid-template-columns:repeat(auto-fill, minmax(160px, 1fr))"></div>
+    <div class="card blueprint elev-sm" style="margin-top:16px">
+      <div class="card-kicker">Analytics</div>
+      <div class="card-title">Top Plans</div>
+      <div id="topPlans" class="card-body">Loading...</div>
+    </div>
     <div class="grid">
       <div class="card blueprint elev-sm"><div class="card-kicker">Assistant</div><div class="card-title">Chat Assistant</div><p class="card-body">Use chat to create plans, add interns, update trackers, and generate summaries.</p><a class="btn btn-secondary" href="/chat" style="width:fit-content;margin-top:10px">Open Chat</a></div>
       <div class="card blueprint elev-sm"><div class="card-kicker">Governance</div><div class="card-title">User Management</div><p class="card-body">Approve and manage normal users based on your permissions.</p><a class="btn btn-secondary" href="/users" style="width:fit-content;margin-top:10px">Manage Users</a></div>
@@ -18,11 +24,6 @@
       <div class="card blueprint elev-sm"><div class="card-kicker">Team</div><div class="card-title">Tasks</div><p class="card-body">Manage admin task workflows.</p><a class="btn btn-secondary" href="/tasks" style="width:fit-content;margin-top:10px">Open Tasks</a></div>
       <div class="card blueprint elev-sm"><div class="card-kicker">Assessment</div><div class="card-title">Evaluation</div><p class="card-body">Run the intern evaluation workflow and generate evaluation output files.</p><a class="btn btn-secondary" href="/evaluation" style="width:fit-content;margin-top:10px">Open Evaluation</a></div>
       <div class="card blueprint elev-sm"><div class="card-kicker">Account</div><div class="card-title">Profile</div><p class="card-body">Update your own account details and password.</p><a class="btn btn-secondary" href="/profile" style="width:fit-content;margin-top:10px">Open Profile</a></div>
-      <div class="card blueprint elev-sm">
-        <div class="card-kicker">Team</div>
-        <div class="card-title">My Open Tickets</div>
-        <div id="myTickets" class="card-body">Loading...</div>
-      </div>
     </div>
   </main>
 </div>
@@ -42,33 +43,31 @@ async function loadMe(){
   }
 }
 function escapeHtmlHome(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-async function loadMyTickets(){
-  const box = document.getElementById('myTickets');
-  try{
-    const meRes = await fetch('/api/me');
-    const me = (await meRes.json()).user || {};
-    const r = await fetch('/api/tasks');
-    const d = await r.json();
-    const mine = (d.tasks||[]).filter(t => t.assigned_to === me.name && !['Completed','Cancelled'].includes(t.status));
-    if(!mine.length){ box.textContent = 'No open tickets assigned to you.'; return; }
-    box.innerHTML = mine.map(t => `
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid color-mix(in srgb, var(--color-text) 12%, transparent)">
-        <div>
-          <div style="font-weight:600">${escapeHtmlHome(t.title)}</div>
-          <div style="font-size:12px;opacity:.75">${escapeHtmlHome(t.priority)} &middot; Due ${escapeHtmlHome(t.due_date) || '—'}</div>
-        </div>
-        <button class="btn btn-secondary" onclick="markTicketDone(${t.id})">Mark Completed</button>
-      </div>`).join('');
-  }catch(e){
-    box.textContent = 'Could not load tickets.';
-  }
+function statTile(label, value){
+  return `<div class="card blueprint elev-sm" style="padding:16px;text-align:center">
+    <div style="font-size:26px;font-weight:700">${value}</div>
+    <div class="muted" style="font-size:12px;margin-top:4px">${label}</div>
+  </div>`;
 }
-async function markTicketDone(id){
-  await fetch(`/api/tasks/${id}/status`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status:'Completed'})});
-  loadMyTickets();
+async function loadKpis(){
+  try{
+    const r = await fetch('/api/dashboard/kpis');
+    const d = await r.json();
+    if(!d.ok) return;
+    const k = d.kpis;
+    document.getElementById('kpiGrid').innerHTML =
+      statTile('Total Users', k.total_users) +
+      statTile('Interns Added', k.interns_added) +
+      statTile('Workbooks Created', k.workbooks_created) +
+      statTile('Plans Created', k.plans_created) +
+      statTile('Hours Saved', k.hours_saved);
+    const topPlans = document.getElementById('topPlans');
+    if(!k.top_plans.length){ topPlans.textContent = 'No plans created yet.'; return; }
+    topPlans.innerHTML = '<ol style="margin:0;padding-left:20px">' + k.top_plans.map(p => `<li>${escapeHtmlHome(p.name)} - ${p.count}</li>`).join('') + '</ol>';
+  }catch(e){}
 }
 loadMe();
-loadMyTickets();
+loadKpis();
 renderNav();
 </script>
 </body></html>

@@ -11,8 +11,7 @@
       <h3 style="margin:0 0 10px">Create Ticket</h3>
       <div class="grid-2">
         <div class="field"><label>Title</label><input id="title"></div>
-        <div class="field"><label>Assigned To</label><select id="assigned_to"><option value="">Unassigned</option></select></div>
-        <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></div>
+        <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option><option>API Key Request</option></select></div>
         <div class="field"><label>Priority</label><select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
         <div class="field"><label>Status</label><select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></div>
         <div class="field"><label>Due Date</label><input type="date" id="due_date"></div>
@@ -20,6 +19,13 @@
       <div class="field"><label>Description</label><textarea id="description"></textarea></div>
       <div class="field"><label>Remarks</label><textarea id="remarks"></textarea></div>
       <button onclick="addTask()">Add Ticket</button>
+    </div>
+    <div class="card blueprint elev-sm" style="padding:20px" id="requestKeyCard">
+      <h3 style="margin:0 0 10px">Request API Key</h3>
+      <p class="muted">Ask an admin to set up an AI provider API key for your account.</p>
+      <div class="field"><label>Note (optional)</label><textarea id="apiKeyNote" placeholder="Anything specific to mention"></textarea></div>
+      <button onclick="requestApiKey()">Request API Key</button>
+      <p id="apiKeyMsg"></p>
     </div>
     <div class="card blueprint elev-sm" style="padding:20px;overflow-x:auto">
       
@@ -42,21 +48,17 @@ async function updateStatus(id, newStatus){
   if(!d.ok){ alert(d.error || 'Could not update status.'); }
   load();
 }
-async function loadAssignees(){
-  try{
-    const r=await fetch('/api/users');
-    const d=await r.json();
-    const users=(d.users||[]).filter(u=>u.status==='Active');
-    assigned_to.innerHTML='<option value="">Unassigned</option>'+users.map(u=>`<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`).join('');
-  }catch(e){}
+async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:'',due_date:due_date.value,remarks:remarks.value})});load()}
+async function requestApiKey(){
+  const r=await fetch('/api/tasks/request-api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:apiKeyNote.value})});
+  const d=await r.json();
+  apiKeyMsg.textContent=d.ok?'Requested - an admin will follow up.':(d.error||'Error');
+  if(d.ok){ apiKeyNote.value=''; load(); }
 }
-async function addTask(){await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:assigned_to.value,due_date:due_date.value,remarks:remarks.value})});load()}
 async function init(){
   const user = await renderNav();
   const isAdmin = user && (user.role === 'Admin' || user.role === 'Super Admin');
-  if(isAdmin){
-    loadAssignees();
-  } else {
+  if(!isAdmin){
     document.getElementById('createCard').style.display = 'none';
   }
   load();

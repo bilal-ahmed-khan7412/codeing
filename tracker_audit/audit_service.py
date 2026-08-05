@@ -44,6 +44,44 @@ class AuditService:
         conn.close()
         return rows_to_dicts(rows)
 
+    def count_actions(self, actions: list[str], status: str = 'Success') -> int:
+        if not actions:
+            return 0
+        placeholders = ','.join('?' for _ in actions)
+        sql = f'SELECT COUNT(*) AS c FROM activity_logs WHERE action IN ({placeholders}) AND status=?'
+        conn = get_conn()
+        count = conn.execute(sql, [*actions, status]).fetchone()['c']
+        conn.close()
+        return count
+
+    def top_targets(self, actions: list[str], status: str = 'Success', limit: int = 5) -> list[dict]:
+        if not actions:
+            return []
+        placeholders = ','.join('?' for _ in actions)
+        sql = f"""SELECT target_name, COUNT(*) AS c FROM activity_logs
+                  WHERE action IN ({placeholders}) AND status=? AND target_name != ''
+                  GROUP BY target_name ORDER BY c DESC LIMIT ?"""
+        conn = get_conn()
+        rows = conn.execute(sql, [*actions, status, limit]).fetchall()
+        conn.close()
+        return [{'name': r['target_name'], 'count': r['c']} for r in rows]
+
+    def hours_saved(self, minutes_by_action: dict[str, float], status: str = 'Success') -> float:
+        """Rough estimate: sum(count of successful actions of type X * assumed
+        manual-minutes for X) / 60. The system's own time-to-complete an
+        action is a few seconds, negligible next to the manual estimate, so
+        it's dropped from the subtraction rather than tracked precisely."""
+        actions = list(minutes_by_action.keys())
+        if not actions:
+            return 0.0
+        placeholders = ','.join('?' for _ in actions)
+        sql = f'SELECT action, COUNT(*) AS c FROM activity_logs WHERE action IN ({placeholders}) AND status=? GROUP BY action'
+        conn = get_conn()
+        rows = conn.execute(sql, [*actions, status]).fetchall()
+        conn.close()
+        total_minutes = sum(r['c'] * minutes_by_action.get(r['action'], 0) for r in rows)
+        return round(total_minutes / 60, 1)
+
     def export_csv(self):
         logs = self.list_logs(limit=10000)
         out = BASE_DIR / 'outputs' / 'activity_logs.csv'

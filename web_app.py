@@ -212,7 +212,7 @@ def api_login(payload: dict):
     user_service.clear_attempts(email)
     audit_service.log(user, interface='Auth', action='Login', status='Success', summary='User logged in')
     token = create_session_token(user)
-    public_user = {k: v for k, v in user.items() if k != 'password'}
+    public_user = {k: v for k, v in user.items() if k not in ('password', 'llm_api_key_encrypted')}
     res = JSONResponse({'ok': True, 'user': public_user})
     res.set_cookie('session_token', token, httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
     return res
@@ -306,6 +306,32 @@ def api_logs_export(request: Request):
     audit_service.log(user, interface='Logs', action='Export Logs', status='Success', output_workbook=Path(path).name)
     return FileResponse(path, filename=Path(path).name)
 
+# Rough estimate of manual time each automated action replaces - the
+# system's own completion time is a few seconds, negligible against these,
+# so "hours saved" collapses to just this manual-time estimate per action.
+_HOURS_SAVED_MINUTES = {
+    'add_intern_with_plan': 20, 'add_intern_basic': 20, 'add_intern': 20,
+    'extend_intern_with_plan': 30, 'extend_intern': 30,
+    'update_task_status': 2,
+    'add_holiday': 5,
+    'create_plan_from_draft': 30, 'create_plan': 30,
+    'create_workbook': 10, 'render_workbook': 10,
+}
+
+@app.get('/api/dashboard/kpis')
+def api_dashboard_kpis(request: Request):
+    user = require_login(request)
+    if not v65_is_admin_or_super(user):
+        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin or Super Admin only'})
+    return {'ok': True, 'kpis': {
+        'total_users': user_service.count_users(),
+        'interns_added': audit_service.count_actions(['add_intern_with_plan', 'add_intern_basic', 'add_intern']),
+        'workbooks_created': audit_service.count_actions(['create_workbook']),
+        'plans_created': audit_service.count_actions(['create_plan_from_draft', 'create_plan']),
+        'hours_saved': audit_service.hours_saved(_HOURS_SAVED_MINUTES),
+        'top_plans': audit_service.top_targets(['create_plan_from_draft', 'create_plan']),
+    }}
+
 @app.get('/api/tasks')
 def api_tasks(request: Request):
     user = require_login(request)
@@ -320,6 +346,20 @@ def api_create_task(request: Request, payload: dict):
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Admin or Super Admin only'})
     task_service.create_task(payload, user)
     audit_service.log(user, interface='Tasks', action='Create Task', target_type='Task', target_name=payload.get('title',''), status='Success')
+    return {'ok': True}
+
+@app.post('/api/tasks/request-api-key')
+def api_request_api_key(request: Request, payload: dict):
+    """Lets any logged-in user (not just Admin/Super Admin) raise this one
+    specific kind of ticket, without opening up general ticket creation."""
+    user = require_login(request)
+    task_service.create_task({
+        'title': f"API Key Request - {user.get('name', '')}",
+        'description': (payload.get('note') or '').strip() or 'Requesting an AI provider API key.',
+        'category': 'API Key Request', 'priority': 'Medium', 'status': 'Pending',
+        'assigned_to': '', 'due_date': '', 'remarks': '',
+    }, user)
+    audit_service.log(user, interface='Tasks', action='Request API Key', status='Success')
     return {'ok': True}
 
 _TASK_STATUS_VALUES = {'Pending', 'In Progress', 'Blocked', 'Completed', 'Cancelled'}
@@ -479,17 +519,19 @@ def chat_message(request: Request, payload: dict):
         return JSONResponse(status_code=400, content={'ok': False, 'error': 'message is required'})
     if current_workbook:
         current_workbook = resolve_workbook(current_workbook, user)
-    return chat_service.message(text, current_workbook)
+    return chat_service.message(text, current_workbook, user_service.get_user_llm_credentials(user['id']))
 
 @app.post("/api/chat/update")
-def chat_update(payload: dict):
-    return chat_service.update_draft(payload.get('draft_id'), payload.get('args') or {})
+def chat_update(request: Request, payload: dict):
+    user = require_login(request)
+    return chat_service.update_draft(payload.get('draft_id'), payload.get('args') or {}, user_service.get_user_llm_credentials(user['id']))
 
 
 @app.post("/api/chat/fill")
-def chat_fill(payload: dict):
+def chat_fill(request: Request, payload: dict):
     """Fill the active chat draft from a follow-up natural language message."""
-    return chat_service.fill_from_text(payload.get('draft_id'), payload.get('message', ''))
+    user = require_login(request)
+    return chat_service.fill_from_text(payload.get('draft_id'), payload.get('message', ''), user_service.get_user_llm_credentials(user['id']))
 
 @app.post("/api/chat/approve")
 def chat_approve(request: Request, payload: dict):
@@ -555,7 +597,7 @@ def chat_manual(request: Request, payload: dict):
     current_workbook = payload.get('current_workbook')
     if current_workbook:
         current_workbook = resolve_workbook(current_workbook, user)
-    return chat_service.create_manual_draft(command, args, current_workbook)
+    return chat_service.create_manual_draft(command, args, current_workbook, user_service.get_user_llm_credentials(user['id']))
 
 
 @app.get("/api/workbook/interns")
@@ -735,6 +777,22 @@ def api_update_profile(request: Request, payload: dict):
     if updated:
         res.set_cookie('session_token', create_session_token(updated), httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
     return res
+
+
+@app.get('/api/profile/llm-key-preview')
+def api_llm_key_preview(request: Request):
+    """Masked preview of the caller's own stored API key - never returns the
+    raw or encrypted value, only whether one is set and its last 4 chars."""
+    user = require_login(request)
+    creds = user_service.get_user_llm_credentials(user['id'])
+    masked = ''
+    if creds.get('llm_api_key_encrypted'):
+        try:
+            from tracker_auth.key_crypto import decrypt_api_key, mask_api_key
+            masked = mask_api_key(decrypt_api_key(creds['llm_api_key_encrypted']))
+        except Exception:
+            masked = ''
+    return {'ok': True, 'llm_provider': creds.get('llm_provider') or '', 'llm_model': creds.get('llm_model') or '', 'has_key': bool(masked), 'masked': masked}
 
 
 @app.post('/api/users/reactivate')

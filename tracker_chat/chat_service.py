@@ -20,10 +20,13 @@ from tracker_excel.renderer.parser import parse_workbook
 
 try:
     from tracker_config.settings import load_settings
-    from tracker_llm.providers import build_provider
+    from tracker_llm.providers import build_provider, build_provider_for_user
 except Exception:
     load_settings = None
     build_provider = None
+    build_provider_for_user = None
+
+from tracker_llm.provider_context import current_provider
 
 COMMAND_LABELS = {
     'create_workbook': 'Create Fresh Workbook',
@@ -132,7 +135,27 @@ class ChatService:
             except Exception:
                 self.provider = None
 
-    def message(self, text: str, current_workbook: str | None = None) -> dict:
+    def _get_provider(self):
+        return current_provider.get() or self.provider
+
+    def _build_provider_override(self, user_creds: dict | None):
+        if not user_creds or not build_provider_for_user:
+            return None
+        try:
+            return build_provider_for_user(user_creds)
+        except Exception:
+            return None
+
+    def message(self, text: str, current_workbook: str | None = None, user_creds: dict | None = None) -> dict:
+        provider = self._build_provider_override(user_creds)
+        token = current_provider.set(provider) if provider else None
+        try:
+            return self._message_impl(text, current_workbook)
+        finally:
+            if token:
+                current_provider.reset(token)
+
+    def _message_impl(self, text: str, current_workbook: str | None = None) -> dict:
         # Plan-aware extension ("extend X to DATE with PLAN") and the required-four
         # workflows (edit plan / extend intern / capstone / scenario) are checked
         # with deterministic regex before the general intent parser, since they have
@@ -161,7 +184,16 @@ class ChatService:
             draft = self._build_llm_intent_draft(text, current_workbook) or self._build_rule_draft(text, current_workbook)
         return self._response_for_draft(draft)
 
-    def update_draft(self, draft_id: str, args: dict) -> dict:
+    def update_draft(self, draft_id: str, args: dict, user_creds: dict | None = None) -> dict:
+        provider = self._build_provider_override(user_creds)
+        token = current_provider.set(provider) if provider else None
+        try:
+            return self._update_draft_impl(draft_id, args)
+        finally:
+            if token:
+                current_provider.reset(token)
+
+    def _update_draft_impl(self, draft_id: str, args: dict) -> dict:
         draft = self.drafts.get(draft_id)
         if not draft:
             return {'ok': False, 'error': 'Draft not found'}
@@ -188,7 +220,16 @@ class ChatService:
         return self._response_for_draft(draft)
 
 
-    def fill_from_text(self, draft_id: str, text: str) -> dict:
+    def fill_from_text(self, draft_id: str, text: str, user_creds: dict | None = None) -> dict:
+        provider = self._build_provider_override(user_creds)
+        token = current_provider.set(provider) if provider else None
+        try:
+            return self._fill_from_text_impl(draft_id, text)
+        finally:
+            if token:
+                current_provider.reset(token)
+
+    def _fill_from_text_impl(self, draft_id: str, text: str) -> dict:
         """Fill missing fields on the active draft from a natural-language reply.
 
         This prevents a follow-up such as "intern name is Musab Khan plan name is
@@ -333,7 +374,16 @@ class ChatService:
         'update_capstone', 'update_scenario', 'summary', 'create_workbook',
     }
 
-    def create_manual_draft(self, command: str, args: dict, current_workbook: str | None) -> dict:
+    def create_manual_draft(self, command: str, args: dict, current_workbook: str | None, user_creds: dict | None = None) -> dict:
+        provider = self._build_provider_override(user_creds)
+        token = current_provider.set(provider) if provider else None
+        try:
+            return self._create_manual_draft_impl(command, args, current_workbook)
+        finally:
+            if token:
+                current_provider.reset(token)
+
+    def _create_manual_draft_impl(self, command: str, args: dict, current_workbook: str | None) -> dict:
         """Build a draft directly from structured args (Forms UI), skipping
         all text-parsing entirely. Reuses the exact same draft lifecycle
         (_response_for_draft, update_draft, approve, cancel) the chat/LLM
@@ -1294,7 +1344,7 @@ class ChatService:
                     return dt.strftime('%Y-%m-%d')
                 except (ValueError, OverflowError):
                     pass
-        if self.provider and self._DATE_HINT_RE.search(text):
+        if self._get_provider() and self._DATE_HINT_RE.search(text):
             return self._llm_extract_date(text)
         return None
 
@@ -1331,7 +1381,7 @@ Return ONLY this JSON shape, nothing else:
 If no real calendar date is mentioned, return: {{"date": null}}
 """
         try:
-            data = self.provider.complete_json(prompt)
+            data = self._get_provider().complete_json(prompt)
             value = (data or {}).get('date')
         except Exception:
             return None
@@ -1667,7 +1717,7 @@ Rules:
         weeks = []
         generation_error = ""
 
-        if self.provider:
+        if self._get_provider():
             for attempt in range(2):
                 try:
                     prompt = self._build_plan_prompt(text, weeks_count)
@@ -1677,7 +1727,7 @@ Rules:
 Your previous response was not usable. Try again.
 Make sure weeks is inside args.weeks and contains detailed topic-specific week objects.
 """
-                    raw = self.provider.complete_json(prompt)
+                    raw = self._get_provider().complete_json(prompt)
                     args = self._normalize_llm_plan_payload(raw)
 
                     # Trust the LLM's own plan name over the regex-extracted
