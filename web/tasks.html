@@ -3,47 +3,81 @@
 </head><body>
 <div class="appshell">
   <aside class="sidebar" id="sidebar"></aside>
-  <main class="main">
+  <main class="main" style="margin:0 auto;display:flex;flex-direction:column">
     <div class="kicker">Team</div>
     <h2 style="margin:0 0 20px">Create Ticket</h2>
-    <div class="card blueprint elev-sm" style="padding:20px" id="createCard">
-
-      <h3 style="margin:0 0 10px">Create Ticket</h3>
-      <div class="grid-2">
-        <div class="field"><label>Title</label><input id="title"></div>
-        <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option><option>API Key Request</option></select></div>
-        <div class="field"><label>Priority</label><select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
-        <div class="field"><label>Status</label><select id="status"><option>Pending</option><option>In Progress</option><option>Blocked</option><option>Completed</option><option>Cancelled</option></select></div>
-        <div class="field"><label>Due Date</label><input type="date" id="due_date"></div>
+    <div style="flex:1;display:flex;justify-content:center;align-items:center">
+      <div style="width:100%;max-width:640px">
+        <div class="card blueprint elev-sm" style="padding:20px" id="typeSelectCard">
+          <h3 style="margin:0 0 10px">What kind of ticket?</h3>
+          <div style="display:flex;gap:12px;flex-wrap:wrap">
+            <button class="btn btn-secondary" style="flex:1;min-width:200px;padding:18px;display:flex;flex-direction:column;align-items:flex-start;text-align:left" onclick="selectTicketType('issue')">
+              <div style="font-weight:700">Issue Ticket</div>
+              <div class="muted" style="font-weight:400;margin-top:4px">Report a bug, request a feature, or flag a problem.</div>
+            </button>
+            <button class="btn btn-secondary" style="flex:1;min-width:200px;padding:18px;display:flex;flex-direction:column;align-items:flex-start;text-align:left" onclick="selectTicketType('apikey')">
+              <div style="font-weight:700">API Key Request</div>
+              <div class="muted" style="font-weight:400;margin-top:4px">Ask for an AI provider API key to be set up for your account.</div>
+            </button>
+          </div>
+        </div>
+        <div class="card blueprint elev-sm" style="padding:20px;display:none" id="createCard">
+          <button class="btn-secondary" type="button" onclick="backToTypeSelect()" style="margin-bottom:10px">&larr; Change ticket type</button>
+          <h3 style="margin:0 0 10px">Create Ticket</h3>
+          <div class="grid-2">
+            <div class="field"><label>Title</label><input id="title"></div>
+            <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></div>
+            <div class="field"><label>Priority</label><select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
+          </div>
+          <div class="field"><label>Description</label><textarea id="description" maxlength="200"></textarea></div>
+          <button onclick="addTask()">Add Ticket</button>
+          <p id="createMsg"></p>
+        </div>
+        <div class="card blueprint elev-sm" style="padding:20px;display:none" id="requestKeyCard">
+          <button class="btn-secondary" type="button" onclick="backToTypeSelect()" style="margin-bottom:10px">&larr; Change ticket type</button>
+          <h3 style="margin:0 0 10px">Request API Key</h3>
+          <p class="muted">Ask an admin to set up an AI provider API key for your account.</p>
+          <div class="field"><label>Note (optional)</label><textarea id="apiKeyNote" placeholder="Anything specific to mention"></textarea></div>
+          <button onclick="requestApiKey()">Request API Key</button>
+          <p id="apiKeyMsg"></p>
+        </div>
       </div>
-      <div class="field"><label>Description</label><textarea id="description" maxlength="200"></textarea></div>
-      <div class="field"><label>Remarks</label><textarea id="remarks"></textarea></div>
-      <button onclick="addTask()">Add Ticket</button>
-      <p id="createMsg"></p>
-    </div>
-    <div class="card blueprint elev-sm" style="padding:20px" id="requestKeyCard">
-      <h3 style="margin:0 0 10px">Request API Key</h3>
-      <p class="muted">Ask an admin to set up an AI provider API key for your account.</p>
-      <div class="field"><label>Note (optional)</label><textarea id="apiKeyNote" placeholder="Anything specific to mention"></textarea></div>
-      <button onclick="requestApiKey()">Request API Key</button>
-      <p id="apiKeyMsg"></p>
     </div>
   </main>
 </div>
 <script src="/static/js/nav.js"></script>
+<script src="/static/js/ui.js"></script>
 <script>
+function selectTicketType(type){
+  document.getElementById('typeSelectCard').style.display = 'none';
+  document.getElementById('createCard').style.display = type === 'issue' ? 'block' : 'none';
+  document.getElementById('requestKeyCard').style.display = type === 'apikey' ? 'block' : 'none';
+}
+function backToTypeSelect(){
+  document.getElementById('typeSelectCard').style.display = 'block';
+  document.getElementById('createCard').style.display = 'none';
+  document.getElementById('requestKeyCard').style.display = 'none';
+}
 async function addTask(){
   if(!title.value.trim()){ createMsg.textContent='Title is required.'; return; }
-  const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,status:status.value,assigned_to:'',due_date:due_date.value,remarks:remarks.value})});
+  const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,assigned_to:''})});
   const d=await r.json();
   createMsg.textContent=d.ok?'Ticket created.':(d.error||'Error');
-  if(d.ok){ title.value=''; description.value=''; remarks.value=''; due_date.value=''; }
+  if(d.ok){
+    title.value=''; description.value='';
+    await showConfirmation('Ticket Created', 'Your ticket has been submitted.');
+    backToTypeSelect();
+  }
 }
 async function requestApiKey(){
   const r=await fetch('/api/tasks/request-api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:apiKeyNote.value})});
   const d=await r.json();
   apiKeyMsg.textContent=d.ok?'Requested - an admin will follow up.':(d.error||'Error');
-  if(d.ok){ apiKeyNote.value=''; }
+  if(d.ok){
+    apiKeyNote.value='';
+    await showConfirmation('Request Sent', 'An admin will follow up on your API key request.');
+    backToTypeSelect();
+  }
 }
 renderNav();
 </script>

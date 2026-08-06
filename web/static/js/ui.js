@@ -107,6 +107,38 @@ function showSecret(title, value, note) {
   });
 }
 
+function showConfirmation(title, message) {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'confirm-overlay';
+    const box = document.createElement('div');
+    box.className = 'confirm-box';
+    const h = document.createElement('h3');
+    h.textContent = title;
+    h.style.margin = '0 0 8px';
+    const p = document.createElement('p');
+    p.textContent = message;
+    const actions = document.createElement('div');
+    actions.className = 'confirm-actions';
+    const ok = document.createElement('button');
+    ok.className = 'btn btn-primary';
+    ok.textContent = 'OK';
+    actions.appendChild(ok);
+    box.appendChild(h);
+    box.appendChild(p);
+    box.appendChild(actions);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    ok.focus();
+    function close() {
+      overlay.remove();
+      resolve();
+    }
+    ok.onclick = close;
+    overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  });
+}
+
 async function withLoading(btn, fn) {
   if (!btn) return fn();
   const original = btn.textContent;

@@ -8,13 +8,15 @@
     <h2 style="margin:0 0 20px">Ticket Queue</h2>
     <div class="card blueprint elev-sm" style="padding:20px;overflow-x:auto">
       <h3 style="margin:0 0 10px">Tickets</h3>
-      <table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Due</th><th>Remarks</th><th>Resolution Note</th></tr></thead><tbody id="rows"></tbody></table>
+      <table><thead><tr><th>ID</th><th>Title</th><th>Category</th><th>Priority</th><th>Status</th><th>Assigned</th><th>Created By</th><th>Created</th><th>Resolution Note</th></tr></thead><tbody id="rows"></tbody></table>
     </div>
   </main>
 </div>
 <div id="ticketModalOverlay" class="confirm-overlay" style="display:none">
-  <div class="confirm-box" style="max-width:420px">
-    <h3 id="tmTitle" style="margin:0 0 10px"></h3>
+  <div class="confirm-box" style="max-width:460px">
+    <h3 id="tmTitle" style="margin:0 0 6px"></h3>
+    <p id="tmMeta" class="muted" style="margin:0 0 10px"></p>
+    <p id="tmDescription" style="margin:0 0 14px"></p>
     <div class="field"><label>Status</label><select id="tmStatus"></select></div>
     <div class="field"><label>Response to requester (optional)</label><textarea id="tmNote"></textarea></div>
     <div class="confirm-actions">
@@ -34,12 +36,14 @@ async function load(){
   const r=await fetch('/api/tasks');
   const d=await r.json();
   _ticketRows = d.tasks || [];
-  rows.innerHTML = _ticketRows.map((t,i)=>`<tr><td>${t.id}</td><td><a href="#" onclick="openTicketAt(${i});return false;" style="font-weight:600;display:inline-block;min-width:80px">${escapeHtml(t.title) || '(untitled ticket)'}</a></td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${escapeHtml(t.status)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.due_date)}</td><td>${escapeHtml(t.remarks)}</td><td>${escapeHtml(t.resolution_note)}</td></tr>`).join('');
+  rows.innerHTML = _ticketRows.map((t,i)=>`<tr><td>${t.id}</td><td><a href="#" onclick="openTicketAt(${i});return false;" style="font-weight:600;display:inline-block;min-width:80px">${escapeHtml(t.title) || '(untitled ticket)'}</a></td><td>${escapeHtml(t.category)}</td><td>${escapeHtml(t.priority)}</td><td>${escapeHtml(t.status)}</td><td>${escapeHtml(t.assigned_to)}</td><td>${escapeHtml(t.created_by)}</td><td>${escapeHtml(t.created_at)}</td><td>${escapeHtml(t.resolution_note)}</td></tr>`).join('');
 }
 function openTicketAt(i){
   const t = _ticketRows[i];
   _openTicketId = t.id;
   document.getElementById('tmTitle').textContent = t.title || '(untitled ticket)';
+  document.getElementById('tmMeta').textContent = `${t.category || 'General'} · ${t.priority || 'Medium'} · Created by ${t.created_by || 'Unknown'} on ${t.created_at || ''}`;
+  document.getElementById('tmDescription').textContent = t.description || '(no description provided)';
   document.getElementById('tmStatus').innerHTML = STATUS_OPTIONS.map(s=>`<option${s===t.status?' selected':''}>${s}</option>`).join('');
   document.getElementById('tmNote').value = t.resolution_note || '';
   document.getElementById('tmMsg').textContent = '';

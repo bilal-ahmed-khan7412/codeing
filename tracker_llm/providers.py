@@ -145,11 +145,15 @@ def build_provider_for_user(creds: dict) -> BaseLLMProvider | None:
     if they haven't configured one (caller should fall back to the shared
     server default in that case).
 
-    llm_base_url is deliberately never taken from the user - it's inherited
-    from the server's own .env settings. Letting a user supply an arbitrary
-    base URL for the "local" provider would let them point the server's
-    outbound HTTP request at an internal-only address (SSRF); only the API
-    key and model are user-suppliable.
+    For 'groq'/'local', llm_base_url is never taken from the user - it's
+    inherited from the server's own .env settings, since letting a user
+    supply an arbitrary base URL would let them point the server's outbound
+    HTTP request at an internal-only address (SSRF). The 'custom' provider
+    is the deliberate exception: it exists specifically so a user can point
+    at a genuine third-party OpenAI-compatible API (Gemini, etc.), so its
+    base_url IS user-supplied - but only after passing is_public_http_url,
+    both at save time (see user_service.update_profile) and again here at
+    use time, in case the resolved address changed since it was saved.
     """
     provider_name = (creds.get('llm_provider') or '').strip().lower()
     encrypted = creds.get('llm_api_key_encrypted') or ''
@@ -162,6 +166,12 @@ def build_provider_for_user(creds: dict) -> BaseLLMProvider | None:
         settings = replace(base, ai_provider='groq', groq_api_key=api_key, groq_model=creds.get('llm_model') or base.groq_model)
     elif provider_name in {'local', 'openai-compatible', 'openai_compatible'}:
         settings = replace(base, ai_provider='local', llm_api_key=api_key, llm_model=creds.get('llm_model') or base.llm_model)
+    elif provider_name == 'custom':
+        base_url = creds.get('llm_base_url') or ''
+        from tracker_llm.url_safety import is_public_http_url
+        if not is_public_http_url(base_url):
+            return None
+        settings = replace(base, ai_provider='local', llm_api_key=api_key, llm_base_url=base_url, llm_model=creds.get('llm_model') or base.llm_model)
     else:
         return None
     return build_provider(settings)

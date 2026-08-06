@@ -19,6 +19,16 @@ async function fetchNotificationCount() {
   }
 }
 
+async function fetchPendingTicketCount() {
+  try {
+    const res = await fetch("/api/tasks/pending-count");
+    const data = await res.json();
+    return data.count || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
 async function renderNav(navElementId) {
   // Sidebar-style pages pass no id (defaults to #sidebar); legacy pages
   // (e.g. chat.html, not yet revamped) still call renderNav('nav') and
@@ -32,12 +42,21 @@ async function renderNav(navElementId) {
     const user = data.user || null;
     if (!user) { el.innerHTML = ""; return null; }
     let links = NAV_LINKS[user.role] || NAV_LINKS["User"];
+    let pendingTicketCount = 0;
     if (user.is_maintainer) {
       links = links.slice();
       const profileIdx = links.findIndex(([href]) => href === "/profile");
       links.splice(profileIdx === -1 ? links.length : profileIdx, 0, ["/ticket-queue", "Ticket Queue"]);
+      pendingTicketCount = await fetchPendingTicketCount();
     }
     const path = location.pathname;
+    const labelFor = (href, label) => {
+      const safeLabel = navEscapeHtml(label);
+      if (href === "/ticket-queue" && pendingTicketCount) {
+        return `${safeLabel}<span class="tag tag-accent" style="margin-left:6px;padding:1px 7px">${pendingTicketCount}</span>`;
+      }
+      return safeLabel;
+    };
     if (id === "sidebar") {
       const notifCount = await fetchNotificationCount();
       const notifActive = path === "/notifications";
@@ -54,7 +73,7 @@ async function renderNav(navElementId) {
         ${bellHtml}
         <nav>${links.map(([href, label]) => {
           const active = href !== "/logout" && href === path;
-          return `<a href="${href}"${active ? ' class="active"' : ''}><span class="dot"></span>${navEscapeHtml(label)}</a>`;
+          return `<a href="${href}"${active ? ' class="active"' : ''}><span class="dot"></span>${labelFor(href, label)}</a>`;
         }).join("")}</nav>
         <div class="foot">
           <span class="tag role">${navEscapeHtml(user.role)}</span>
@@ -62,7 +81,7 @@ async function renderNav(navElementId) {
           <div class="email">${navEscapeHtml(user.email || '')}</div>
         </div>`;
     } else {
-      el.innerHTML = links.map(([href, label]) => `<a href="${href}" style="color:white;font-weight:700;margin-right:14px;text-decoration:none">${navEscapeHtml(label)}</a>`).join("");
+      el.innerHTML = links.map(([href, label]) => `<a href="${href}" style="color:white;font-weight:700;margin-right:14px;text-decoration:none">${labelFor(href, label)}</a>`).join("");
     }
     return user;
   } catch (e) {

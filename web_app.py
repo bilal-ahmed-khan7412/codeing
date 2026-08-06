@@ -3,6 +3,7 @@ from tracker_evaluation.evaluation_service import save_upload, get_tracker_inter
 import os
 import secrets
 import string
+from html import escape as escape_html
 
 from pathlib import Path
 from datetime import datetime
@@ -59,6 +60,14 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = _CSP
+    if request.url.path.startswith("/static/"):
+        # No explicit Cache-Control meant browsers fell back to heuristic
+        # caching off Last-Modified and could silently serve a stale JS/CSS
+        # file for a while after a deploy - force revalidation on every
+        # load instead. Still fast (a 304 if unchanged, via the ETag
+        # StaticFiles already sets) - this just guarantees the browser
+        # actually asks, rather than assuming.
+        response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -362,6 +371,13 @@ def api_tasks(request: Request):
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Maintainer only'})
     return {'ok': True, 'tasks': task_service.list_tasks()}
 
+@app.get('/api/tasks/pending-count')
+def api_tasks_pending_count(request: Request):
+    user = require_login(request)
+    if not is_maintainer(user):
+        return {'ok': True, 'count': 0}
+    return {'ok': True, 'count': task_service.count_pending_tasks()}
+
 @app.post('/api/tasks')
 def api_create_task(request: Request, payload: dict):
     user = require_login(request)
@@ -649,7 +665,8 @@ def chat_approve(request: Request, payload: dict):
         return JSONResponse(status_code=500, content={'ok': False, 'error': str(e)})
 
 @app.post("/api/chat/cancel")
-def chat_cancel(payload: dict):
+def chat_cancel(request: Request, payload: dict):
+    require_login(request)
     return chat_service.cancel(payload.get('draft_id'))
 
 
@@ -863,7 +880,7 @@ def api_llm_key_preview(request: Request):
             masked = mask_api_key(decrypt_api_key(creds['llm_api_key_encrypted']))
         except Exception:
             masked = ''
-    return {'ok': True, 'llm_provider': creds.get('llm_provider') or '', 'llm_model': creds.get('llm_model') or '', 'has_key': bool(masked), 'masked': masked}
+    return {'ok': True, 'llm_provider': creds.get('llm_provider') or '', 'llm_model': creds.get('llm_model') or '', 'llm_base_url': creds.get('llm_base_url') or '', 'has_key': bool(masked), 'masked': masked}
 
 
 @app.post('/api/users/reactivate')
@@ -1317,19 +1334,28 @@ def api_v92_readonly_intern_summary(request: Request, payload: dict):
                 pending_themes.append(theme)
 
         status_label = 'On Track' if completion >= 0.75 else ('Developing' if completion >= 0.45 else 'Needs Support')
+        # intern_name/workbook filename/week label/theme text all ultimately
+        # come from the uploaded Excel file's own content - escape before
+        # embedding in HTML sent to the browser, since this response gets
+        # rendered via innerHTML client-side with no escaping of its own.
+        safe_intern_name = escape_html(str(intern_name))
+        safe_wb_name = escape_html(wb_path.name)
+        safe_current_week = escape_html(str(current_week))
+        safe_completed_areas = ', '.join(escape_html(str(t)) for t in completed_themes[:4]) or 'Not available from tracker.'
+        safe_pending_areas = ', '.join(escape_html(str(t)) for t in pending_themes[:4]) or 'No pending areas found.'
         html = f"""
-<h3>{intern_name} - Progress Summary</h3>
+<h3>{safe_intern_name} - Progress Summary</h3>
 <ul>
-  <li><b>Workbook:</b> {wb_path.name}</li>
+  <li><b>Workbook:</b> {safe_wb_name}</li>
   <li><b>Daily tasks:</b> {completed}/{total} completed ({completion:.0%})</li>
   <li><b>Weekly projects:</b> {pdone}/{ptotal} completed ({pcompletion:.0%})</li>
   <li><b>In progress:</b> {in_progress}</li>
   <li><b>Pending:</b> {pending}</li>
-  <li><b>Current/next week:</b> {current_week}</li>
+  <li><b>Current/next week:</b> {safe_current_week}</li>
   <li><b>Status:</b> {status_label}</li>
 </ul>
-<p><b>Completed areas:</b> {', '.join(completed_themes[:4]) or 'Not available from tracker.'}</p>
-<p><b>Pending/upcoming areas:</b> {', '.join(pending_themes[:4]) or 'No pending areas found.'}</p>
+<p><b>Completed areas:</b> {safe_completed_areas}</p>
+<p><b>Pending/upcoming areas:</b> {safe_pending_areas}</p>
 <p><b>Suggested manager action:</b> Review pending tasks/projects and ask for blockers if progress is below expected pace.</p>
 """
         try:

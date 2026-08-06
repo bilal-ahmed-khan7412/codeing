@@ -93,6 +93,7 @@ window.addEventListener('beforeunload', function(e){
   e.returnValue = '';
 });
 
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function step(n){[1,2,3,4,5].forEach(i=>document.getElementById('s'+i).classList.toggle('active',i===n));}
 function show(id){['upload','match','questions','review','download'].forEach(x=>document.getElementById(x).classList.add('hidden'));document.getElementById(id).classList.remove('hidden');}
 
@@ -104,16 +105,18 @@ async function startUpload(){
   if(!d.ok){uploadMsg.textContent=d.error||'Upload failed';return;}
   sessionId=d.session_id;trackerInterns=d.tracker_interns;evalCards=d.eval_cards;
   hasUnsavedProgress=true;
-  internSelect.innerHTML=trackerInterns.map(x=>`<option value="${x.name}">${x.name}</option>`).join('');
+  internSelect.innerHTML=trackerInterns.map(x=>`<option value="${escapeHtml(x.name)}">${escapeHtml(x.name)}</option>`).join('');
   show('match');step(2);showMatches();
 }
 function similarity(a,b){function n(x){return String(x).toLowerCase().replace(/[^a-z0-9 ]/g,'').trim()}a=n(a);b=n(b);if(a===b)return 1;let same=0;for(const ch of a){if(b.includes(ch))same++;}return Math.max(same/Math.max(a.length,1), same/Math.max(b.length,1))*0.7;}
+let matchCardRows=[];
 function showMatches(){
   const name=internSelect.value;
-  const scored=evalCards.map(c=>({...c,match:similarity(name,c.name)})).sort((a,b)=>b.match-a.match).slice(0,5);
-  matchCards.innerHTML=scored.map((m,i)=>`<div class="match-card"><b>${m.name}</b><br><span class="muted">Sheet: ${m.sheet}</span><br><span class="pill">${Math.round(m.match*100)}% match</span><br><button onclick="chooseSheet('${m.sheet.replaceAll("'","\\'")}')">Use this scorecard</button></div>`).join('');
-  if(scored[0])selectedEvalSheet=scored[0].sheet;
+  matchCardRows=evalCards.map(c=>({...c,match:similarity(name,c.name)})).sort((a,b)=>b.match-a.match).slice(0,5);
+  matchCards.innerHTML=matchCardRows.map((m,i)=>`<div class="match-card"><b>${escapeHtml(m.name)}</b><br><span class="muted">Sheet: ${escapeHtml(m.sheet)}</span><br><span class="pill">${Math.round(m.match*100)}% match</span><br><button onclick="chooseSheetAt(${i})">Use this scorecard</button></div>`).join('');
+  if(matchCardRows[0])selectedEvalSheet=matchCardRows[0].sheet;
 }
+function chooseSheetAt(i){ chooseSheet(matchCardRows[i].sheet); }
 function chooseSheet(sheet){selectedEvalSheet=sheet;document.querySelectorAll('.match-card').forEach(c=>c.style.outline='');event.target.closest('.match-card').style.outline='3px solid var(--color-accent)';}
 
 async function loadQuestions(btn){
@@ -145,7 +148,7 @@ function renderQuestion(){
   const q=questions[qIndex];
   if(!q){renderReview();return;}
   qTitle.textContent=`Criterion ${qIndex+1} of ${questions.length}: ${q.criterion}`;
-  questionBox.innerHTML=`<div class="card blueprint elev-sm" style="padding:14px"><p><b>Rubric:</b> ${q.rubric}</p><p><b>Question:</b> ${q.question}</p><div class="field"><label>Evaluator answer</label><textarea id="ans">${answers[q.criterion]||''}</textarea></div><button onclick="suggestScore(this)">Suggest Score</button><button onclick="skipQuestion()">Skip</button><div id="suggestion" aria-live="polite"></div></div>`;
+  questionBox.innerHTML=`<div class="card blueprint elev-sm" style="padding:14px"><p><b>Rubric:</b> ${escapeHtml(q.rubric)}</p><p><b>Question:</b> ${escapeHtml(q.question)}</p><div class="field"><label>Evaluator answer</label><textarea id="ans">${escapeHtml(answers[q.criterion]||'')}</textarea></div><button onclick="suggestScore(this)">Suggest Score</button><button onclick="skipQuestion()">Skip</button><div id="suggestion" aria-live="polite"></div></div>`;
 }
 async function suggestScore(btn){
   const q=questions[qIndex];
@@ -158,7 +161,7 @@ async function suggestScore(btn){
   finalScores[q.criterion]=d.score;
   rationales[q.criterion]=d.rationale||'AI suggested this score from the evaluator answer.';
   scoreSources[q.criterion]='AI suggested';
-  suggestion.innerHTML=`<div class="match-card"><b>Suggested score:</b> ${d.score}/5<br><b>Rationale:</b> ${d.rationale}<br><button class="success" onclick="nextQuestion()">Accept &amp; Next</button><button onclick="editSuggestion()">Edit Score</button></div>`;
+  suggestion.innerHTML=`<div class="match-card"><b>Suggested score:</b> ${d.score}/5<br><b>Rationale:</b> ${escapeHtml(d.rationale)}<br><button class="success" onclick="nextQuestion()">Accept &amp; Next</button><button onclick="editSuggestion()">Edit Score</button></div>`;
 }
 function editSuggestion(){
   const q=questions[qIndex];
@@ -180,11 +183,12 @@ function skipQuestion(){
 function nextQuestion(){qIndex++;renderQuestion();}
 function renderReview(){
   show('review');step(4);
-  reviewRows.innerHTML=questions.map(q=>{
+  reviewRows.innerHTML=questions.map((q,i)=>{
     const source=scoreSources[q.criterion]||'AI suggested';
-    return `<div class="score-row"><div><b>${q.criterion}</b><p class="muted">${q.rubric}</p></div><div><div class="field"><label>Final score</label><input type="number" min="0" max="5" value="${finalScores[q.criterion]??0}" data-score="${q.criterion}" onchange="markSetByUser('${q.criterion.replaceAll("'","\\'")}')"></div><span class="pill" data-source="${q.criterion}">${source}</span></div></div>`;
+    return `<div class="score-row"><div><b>${escapeHtml(q.criterion)}</b><p class="muted">${escapeHtml(q.rubric)}</p></div><div><div class="field"><label>Final score</label><input type="number" min="0" max="5" value="${finalScores[q.criterion]??0}" data-score="${escapeHtml(q.criterion)}" onchange="markSetByUserAt(${i})"></div><span class="pill" data-source="${escapeHtml(q.criterion)}">${escapeHtml(source)}</span></div></div>`;
   }).join('');
 }
+function markSetByUserAt(i){ markSetByUser(questions[i].criterion); }
 function markSetByUser(criterion){
   scoreSources[criterion]='Set by user';
   const src=document.querySelector(`[data-source="${criterion}"]`);

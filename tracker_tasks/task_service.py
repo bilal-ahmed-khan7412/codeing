@@ -66,3 +66,12 @@ class TaskService:
         conn.execute("UPDATE task_tracker SET creator_notified=1 WHERE id=?", (task_id,))
         conn.commit()
         conn.close()
+
+    def count_pending_tasks(self):
+        # 'Pending' status itself is the "unread" signal for the Maintainer -
+        # nobody has triaged it yet. No separate seen/unseen flag needed since
+        # touching a ticket (changing its status) is exactly what clears it.
+        conn = get_conn()
+        count = conn.execute("SELECT COUNT(*) AS c FROM task_tracker WHERE status='Pending'").fetchone()['c']
+        conn.close()
+        return count

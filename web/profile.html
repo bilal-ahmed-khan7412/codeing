@@ -26,8 +26,10 @@
           <option value="">Use server default</option>
           <option value="groq">Groq (my own key)</option>
           <option value="local">Local / OpenAI-compatible server (my own key)</option>
+          <option value="custom">Custom (base URL + key) - Gemini, etc.</option>
         </select>
       </div>
+      <div class="field" id="llmBaseUrlField" style="display:none"><label>Base URL</label><input id="llm_base_url" placeholder="https://generativelanguage.googleapis.com/v1beta/openai"></div>
       <div class="field"><label>Model (optional)</label><input id="llm_model" placeholder="Defaults to the server's configured model"></div>
       <div class="field"><label>API Key</label><input id="llm_api_key" type="password" placeholder="No key set"></div>
       <button onclick="saveLlm()">Save AI Provider</button>
@@ -40,16 +42,22 @@
 <script>
 async function me(){const r=await fetch('/api/me');const d=await r.json();if(d.user){name.value=d.user.name||'';email.value=d.user.email||'';department.value=d.user.department||'';auto_cleanup.checked=!!d.user.auto_cleanup_versions;}};
 async function save(){const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.value,email:email.value,department:department.value,password:password.value,auto_cleanup_versions:auto_cleanup.checked})});const d=await r.json();msg.textContent=d.ok?'Saved.':(d.error||'Error');}me();
+function toggleBaseUrlField(){
+  document.getElementById('llmBaseUrlField').style.display = llm_provider.value === 'custom' ? 'block' : 'none';
+}
+llm_provider.addEventListener('change', toggleBaseUrlField);
 async function loadLlmPreview(){
   const r=await fetch('/api/profile/llm-key-preview');
   const d=await r.json();
   if(!d.ok) return;
   llm_provider.value=d.llm_provider||'';
   llm_model.value=d.llm_model||'';
+  llm_base_url.value=d.llm_base_url||'';
   llm_api_key.placeholder=d.has_key?`Currently set: ${d.masked} - leave blank to keep`:'No key set';
+  toggleBaseUrlField();
 }
 async function saveLlm(){
-  const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_provider:llm_provider.value,llm_model:llm_model.value,llm_api_key:llm_api_key.value})});
+  const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_provider:llm_provider.value,llm_model:llm_model.value,llm_base_url:llm_base_url.value,llm_api_key:llm_api_key.value})});
   const d=await r.json();
   llmMsg.textContent=d.ok?'Saved.':(d.error||'Error');
   llm_api_key.value='';

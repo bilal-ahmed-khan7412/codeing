@@ -134,7 +134,7 @@ class UserService:
 
     def get_user_llm_credentials(self, user_id: int):
         conn = get_conn()
-        row = conn.execute('SELECT llm_provider,llm_api_key_encrypted,llm_model FROM users WHERE id=?', (user_id,)).fetchone()
+        row = conn.execute('SELECT llm_provider,llm_api_key_encrypted,llm_model,llm_base_url FROM users WHERE id=?', (user_id,)).fetchone()
         conn.close()
         return dict(row) if row else {}
 
@@ -253,6 +253,13 @@ class UserService:
             fields.append('llm_provider=?'); values.append((data['llm_provider'] or '').strip())
         if 'llm_model' in data:
             fields.append('llm_model=?'); values.append((data['llm_model'] or '').strip())
+        if 'llm_base_url' in data:
+            base_url = (data['llm_base_url'] or '').strip()
+            if base_url and (data.get('llm_provider') or '').strip().lower() == 'custom':
+                from tracker_llm.url_safety import is_public_http_url
+                if not is_public_http_url(base_url):
+                    raise ValueError('That base URL is not reachable as a public address.')
+            fields.append('llm_base_url=?'); values.append(base_url)
         if data.get('llm_api_key'):
             # Non-empty = set a new key. A blank field on save leaves the
             # existing key untouched - clearing it is a separate explicit
