@@ -39,9 +39,10 @@
   </main>
 </div>
 <script src="/static/js/nav.js"></script>
+<script src="/static/js/ui.js"></script>
 <script>
 async function me(){const r=await fetch('/api/me');const d=await r.json();if(d.user){name.value=d.user.name||'';email.value=d.user.email||'';department.value=d.user.department||'';auto_cleanup.checked=!!d.user.auto_cleanup_versions;}};
-async function save(){const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.value,email:email.value,department:department.value,password:password.value,auto_cleanup_versions:auto_cleanup.checked})});const d=await r.json();msg.textContent=d.ok?'Saved.':(d.error||'Error');}me();
+async function save(){const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name.value,email:email.value,department:department.value,password:password.value,auto_cleanup_versions:auto_cleanup.checked})});const d=await r.json();msg.textContent=d.ok?'Saved.':(d.error||'Error');if(d.ok)await showConfirmation('Profile Updated','Your account details have been saved.');}me();
 function toggleBaseUrlField(){
   document.getElementById('llmBaseUrlField').style.display = llm_provider.value === 'custom' ? 'block' : 'none';
 }
@@ -62,6 +63,7 @@ async function saveLlm(){
   llmMsg.textContent=d.ok?'Saved.':(d.error||'Error');
   llm_api_key.value='';
   await loadLlmPreview();
+  if(d.ok)await showConfirmation('AI Provider Saved','Your AI provider settings have been saved.');
 }
 async function clearLlmKey(){
   const r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({llm_api_key_clear:true})});

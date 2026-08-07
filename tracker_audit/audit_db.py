@@ -90,6 +90,15 @@ def init_db():
         cur.execute("ALTER TABLE task_tracker ADD COLUMN resolution_note TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
+    try:
+        # Shared column, meaning depends on the ticket's category: for a
+        # normal Issue ticket it's Bug/Error/Feature Request/Question; for
+        # an API Key Request ticket it's which provider (Groq/Gemini/Other).
+        # The two categories are mutually exclusive, so one column covers
+        # both without ambiguity.
+        cur.execute("ALTER TABLE task_tracker ADD COLUMN ticket_type TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
     cur.execute('SELECT COUNT(*) AS c FROM users')
     if cur.fetchone()['c'] == 0:
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

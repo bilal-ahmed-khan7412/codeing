@@ -31,10 +31,10 @@ class TaskService:
     def create_task(self, data, user=None):
         user = user or {}
         conn = get_conn()
-        conn.execute('''INSERT INTO task_tracker(title,description,category,priority,status,assigned_to,created_by,created_at,due_date,remarks)
-                        VALUES(?,?,?,?,?,?,?,?,?,?)''', (
+        conn.execute('''INSERT INTO task_tracker(title,description,category,priority,status,assigned_to,created_by,created_at,due_date,remarks,ticket_type)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)''', (
             data.get('title','').strip(), data.get('description','')[:200], data.get('category','General'), data.get('priority','Medium'),
-            data.get('status','Pending'), data.get('assigned_to',''), user.get('name',''), now(), data.get('due_date',''), data.get('remarks','')
+            data.get('status','Pending'), data.get('assigned_to',''), user.get('name',''), now(), data.get('due_date',''), data.get('remarks',''), data.get('ticket_type','')
         ))
         conn.commit()
         conn.close()

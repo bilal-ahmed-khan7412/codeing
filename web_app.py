@@ -70,14 +70,16 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Content-Security-Policy"] = _CSP
-    if request.url.path.startswith("/static/"):
-        # No explicit Cache-Control meant browsers fell back to heuristic
-        # caching off Last-Modified and could silently serve a stale JS/CSS
-        # file for a while after a deploy - force revalidation on every
-        # load instead. Still fast (a 304 if unchanged, via the ETag
-        # StaticFiles already sets) - this just guarantees the browser
-        # actually asks, rather than assuming.
-        response.headers["Cache-Control"] = "no-cache"
+    # No explicit Cache-Control meant browsers fell back to heuristic
+    # caching and could silently serve a stale page/JS/CSS file for a
+    # while after a deploy - force revalidation on every load instead.
+    # Originally scoped to /static/* only, which missed the page routes
+    # themselves (/chat, /tasks, etc.) - a stale cached /chat page kept
+    # showing old rendering logic even after the server-side fix landed.
+    # Still fast for static assets (a 304 if unchanged, via the ETag
+    # StaticFiles already sets) - this just guarantees the browser
+    # actually asks, rather than assuming.
+    response.headers["Cache-Control"] = "no-cache"
     return response
 
 
@@ -447,11 +449,14 @@ def api_request_api_key(request: Request, payload: dict):
     """Lets any logged-in user (not just Admin/Super Admin) raise this one
     specific kind of ticket, without opening up general ticket creation."""
     user = require_login(request)
+    provider = (payload.get('provider') or '').strip()
+    if provider not in {'Groq', 'Gemini', 'Other'}:
+        provider = 'Other'
     task_service.create_task({
         'title': f"API Key Request - {user.get('name', '')}",
         'description': (payload.get('note') or '').strip() or 'Requesting an AI provider API key.',
         'category': 'API Key Request', 'priority': 'Medium', 'status': 'Pending',
-        'assigned_to': '', 'due_date': '', 'remarks': '',
+        'assigned_to': '', 'due_date': '', 'remarks': '', 'ticket_type': provider,
     }, user)
     audit_service.log(user, interface='Tasks', action='Request API Key', status='Success')
     return {'ok': True}

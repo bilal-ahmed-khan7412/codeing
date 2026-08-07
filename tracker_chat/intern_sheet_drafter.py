@@ -211,7 +211,14 @@ Quality rules:
         for i, wr in enumerate(week_ranges):
             w = weeks[i] if i < len(weeks) and isinstance(weeks[i], dict) else {}
             raw_daily_tasks = w.get('daily_tasks')
-            if not isinstance(raw_daily_tasks, list) or not raw_daily_tasks:
+            distinct = {str(x).strip() for x in raw_daily_tasks if str(x).strip()} if isinstance(raw_daily_tasks, list) else set()
+            if not isinstance(raw_daily_tasks, list) or not raw_daily_tasks or len(distinct) < 3:
+                # _is_good_draft only checks that daily_tasks has enough
+                # non-empty entries, not that they're actually different -
+                # a lazy LLM response repeating the same weekly summary 5
+                # times passes that check and shows up as 5 identical "Day
+                # N" rows in the edit-draft UI. Re-expand into genuinely
+                # distinct entries whenever what came back isn't.
                 fallback_one = clean_debug_text(w.get('daily_task'), 'Complete assigned practical tasks for this week.')
                 raw_daily_tasks = self._expand_to_daily_tasks(fallback_one, w.get('theme') or f"Week {wr['week']} Learning")
             merged.append({

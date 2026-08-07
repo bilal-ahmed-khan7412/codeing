@@ -624,29 +624,36 @@ const EDITABLE_SCHEDULE_KEYS = ['schedule_preview', 'weeks', 'extension_schedule
 const READONLY_SCHEDULE_KEYS = [];
 let currentScheduleKey = null;
 
-function scheduleRowHtml(w, i, editable){
+function scheduleRowHtml(w, i, editable, hasDailyBreakdown){
   const theme = w.theme || '';
-  // create_plan_from_draft's weeks use 'task'; add_intern's schedule_preview
-  // and extend_intern's extension_schedule_preview use 'daily_task'
-  // (or a 'daily_tasks' array) instead - without this fallback the Task
-  // box showed empty for those two even though the daily tasks genuinely
-  // exist and appear correctly in the generated Excel.
+  // create_plan_from_draft's weeks only ever have a single 'task' per week -
+  // no day-level breakdown exists in that data at all. add_intern's
+  // schedule_preview and extend_intern's extension_schedule_preview use
+  // 'daily_task'/'daily_tasks' instead, which genuinely do have (or expand
+  // to) 5 distinct days. Padding the single-task case out to 5 boxes by
+  // repeating it was showing as "5 identical daily tasks" for Create Plan,
+  // which doesn't have days to show in the first place.
   const singleTask = w.task || w.daily_task || (Array.isArray(w.daily_tasks) && w.daily_tasks[0]) || '';
-  const rawDaily = Array.isArray(w.daily_tasks) && w.daily_tasks.length ? w.daily_tasks : [singleTask];
-  // Show a full week's worth of days - pad by repeating the last real entry
-  // rather than leaving later days blank, since a short list here almost
-  // always means "not broken into 5 yet", not "only 2 days planned".
-  const dailyTasks = [0,1,2,3,4].map(d => rawDaily[d] ?? rawDaily[rawDaily.length-1] ?? '');
   const project = w.weekly_project || '';
   const notes = w.notes || '';
   const header = `<div style="display:flex;justify-content:space-between;font-weight:600">
       <span>Week ${escapeHtml(w.week ?? (i+1))}</span>
       <span class="muted">${escapeHtml(w.date_range || '')}</span>
     </div>`;
+  let dailyTasks = [];
+  if(hasDailyBreakdown){
+    const rawDaily = Array.isArray(w.daily_tasks) && w.daily_tasks.length ? w.daily_tasks : [singleTask];
+    // Show a full week's worth of days - pad by repeating the last real entry
+    // rather than leaving later days blank, since a short list here almost
+    // always means "not broken into 5 yet", not "only 2 days planned".
+    dailyTasks = [0,1,2,3,4].map(d => rawDaily[d] ?? rawDaily[rawDaily.length-1] ?? '');
+  }
   if(!editable){
     return `<div class="card" style="margin:8px 0;padding:12px">${header}
       <p style="margin:6px 0 0"><strong>Theme:</strong> ${escapeHtml(theme)}</p>
-      ${dailyTasks.map((t,di) => `<p style="margin:2px 0 0 12px"><strong>Day ${di+1}:</strong> ${escapeHtml(t)}</p>`).join('')}
+      ${hasDailyBreakdown
+        ? dailyTasks.map((t,di) => `<p style="margin:2px 0 0 12px"><strong>Day ${di+1}:</strong> ${escapeHtml(t)}</p>`).join('')
+        : `<p style="margin:2px 0 0 12px"><strong>Task:</strong> ${escapeHtml(singleTask)}</p>`}
       <p style="margin:4px 0 0"><strong>Weekly project:</strong> ${escapeHtml(project)}</p>
       <p style="margin:4px 0 0"><strong>Notes:</strong> ${escapeHtml(notes)}</p>
     </div>`;
@@ -657,8 +664,9 @@ function scheduleRowHtml(w, i, editable){
       <div class="field"><label>Weekly project</label><input class="sched-project" value="${escapeHtml(project)}"></div>
     </div>
     <div class="field">
-      <label>Daily Tasks</label>
-      ${dailyTasks.map((t,di) => `<input class="sched-task-day" data-day="${di}" value="${escapeHtml(t)}" placeholder="Day ${di+1} task" style="margin-bottom:4px">`).join('')}
+      ${hasDailyBreakdown
+        ? `<label>Daily Tasks</label>${dailyTasks.map((t,di) => `<input class="sched-task-day" data-day="${di}" value="${escapeHtml(t)}" placeholder="Day ${di+1} task" style="margin-bottom:4px">`).join('')}`
+        : `<label>Task</label><textarea class="sched-task-single">${escapeHtml(singleTask)}</textarea>`}
     </div>
     <div class="field"><label>Notes</label><input class="sched-notes" value="${escapeHtml(notes)}"></div>
   </div>`;
@@ -671,8 +679,9 @@ function renderScheduleEditor(args){
   if(editableKey){
     currentScheduleKey = editableKey;
     const weeks = args[editableKey];
+    const hasDailyBreakdown = editableKey !== 'weeks';
     container.innerHTML = `<h4 style="margin:14px 0 4px">Weekly schedule (editable)</h4>`
-      + weeks.map((w,i) => scheduleRowHtml(w, i, true)).join('');
+      + weeks.map((w,i) => scheduleRowHtml(w, i, true, hasDailyBreakdown)).join('');
     return;
   }
   const readonlyKey = READONLY_SCHEDULE_KEYS.find(k => Array.isArray(args[k]) && args[k].length);
@@ -680,7 +689,7 @@ function renderScheduleEditor(args){
     const weeks = args[readonlyKey];
     container.innerHTML = `<h4 style="margin:14px 0 4px">Weekly schedule (auto-generated from the plan)</h4>`
       + `<p class="muted">This is regenerated fresh from the plan when approved, so it can't be edited here - edit the plan itself (Create Plan) if the weekly content needs to change.</p>`
-      + weeks.map((w,i) => scheduleRowHtml(w, i, false)).join('');
+      + weeks.map((w,i) => scheduleRowHtml(w, i, false, true)).join('');
     return;
   }
   container.innerHTML = '';
@@ -691,23 +700,28 @@ function collectScheduleEdits(){
   const rows = [...document.querySelectorAll('#previewSchedule [data-week-index]')];
   if(!rows.length) return null;
   const original = lastPreviewArgs[currentScheduleKey] || [];
+  // create_plan_from_draft's 'weeks' only ever has a single task per week -
+  // don't fabricate a daily_tasks array for it that never existed in the
+  // plan data, matching scheduleRowHtml's single-Task-field rendering.
+  const hasDailyBreakdown = currentScheduleKey !== 'weeks';
   const weeks = rows.map((row, i) => {
-    const dayInputs = [...row.querySelectorAll('.sched-task-day')].sort((a,b) => +a.dataset.day - +b.dataset.day);
-    const dailyTasks = dayInputs.map(inp => inp.value);
     const orig = original[i] || {};
-    return {
+    const base = {
       ...orig,
       theme: row.querySelector('.sched-theme').value,
-      // Set every key the backend might read for "the task" (see
-      // scheduleRowHtml's fallback chain) so this takes effect regardless of
-      // which schedule type this is - day 1's task stands in for the
-      // singular task/daily_task fields, daily_tasks carries all 5 days.
-      task: dailyTasks[0] || '',
-      daily_task: dailyTasks[0] || '',
-      daily_tasks: dailyTasks,
       weekly_project: row.querySelector('.sched-project').value,
       notes: row.querySelector('.sched-notes').value,
     };
+    if(hasDailyBreakdown){
+      const dayInputs = [...row.querySelectorAll('.sched-task-day')].sort((a,b) => +a.dataset.day - +b.dataset.day);
+      const dailyTasks = dayInputs.map(inp => inp.value);
+      // Set every key the backend might read for "the task" (see
+      // scheduleRowHtml's fallback chain) - day 1's task stands in for the
+      // singular task/daily_task fields, daily_tasks carries all 5 days.
+      return { ...base, task: dailyTasks[0] || '', daily_task: dailyTasks[0] || '', daily_tasks: dailyTasks };
+    }
+    const singleTask = row.querySelector('.sched-task-single')?.value || '';
+    return { ...base, task: singleTask };
   });
   return weeks;
 }

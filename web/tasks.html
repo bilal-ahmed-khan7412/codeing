@@ -27,6 +27,7 @@
           <div class="grid-2">
             <div class="field"><label>Title</label><input id="title"></div>
             <div class="field"><label>Category</label><select id="category"><option>Frontend</option><option>Backend</option><option>LLM</option><option>Workbook</option><option>Governance</option><option>Bug</option><option>Deployment</option></select></div>
+            <div class="field"><label>Type</label><select id="ticketType"><option>Bug</option><option>Error</option><option>Feature Request</option><option>Question</option></select></div>
             <div class="field"><label>Priority</label><select id="priority"><option>Low</option><option selected>Medium</option><option>High</option></select></div>
           </div>
           <div class="field"><label>Description</label><textarea id="description" maxlength="200"></textarea></div>
@@ -37,6 +38,7 @@
           <button class="btn-secondary" type="button" onclick="backToTypeSelect()" style="margin-bottom:10px">&larr; Change ticket type</button>
           <h3 style="margin:0 0 10px">Request API Key</h3>
           <p class="muted">Ask an admin to set up an AI provider API key for your account.</p>
+          <div class="field"><label>Provider</label><select id="apiKeyProvider"><option>Groq</option><option>Gemini</option><option>Other</option></select></div>
           <div class="field"><label>Note (optional)</label><textarea id="apiKeyNote" placeholder="Anything specific to mention"></textarea></div>
           <button onclick="requestApiKey()">Request API Key</button>
           <p id="apiKeyMsg"></p>
@@ -60,7 +62,7 @@ function backToTypeSelect(){
 }
 async function addTask(){
   if(!title.value.trim()){ createMsg.textContent='Title is required.'; return; }
-  const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,assigned_to:''})});
+  const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title.value,description:description.value,category:category.value,priority:priority.value,ticket_type:ticketType.value,assigned_to:''})});
   const d=await r.json();
   createMsg.textContent=d.ok?'Ticket created.':(d.error||'Error');
   if(d.ok){
@@ -70,7 +72,7 @@ async function addTask(){
   }
 }
 async function requestApiKey(){
-  const r=await fetch('/api/tasks/request-api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:apiKeyNote.value})});
+  const r=await fetch('/api/tasks/request-api-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:apiKeyNote.value,provider:apiKeyProvider.value})});
   const d=await r.json();
   apiKeyMsg.textContent=d.ok?'Requested - an admin will follow up.':(d.error||'Error');
   if(d.ok){
