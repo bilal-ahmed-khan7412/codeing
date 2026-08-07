@@ -82,8 +82,8 @@ class AuditService:
         total_minutes = sum(r['c'] * minutes_by_action.get(r['action'], 0) for r in rows)
         return round(total_minutes / 60, 1)
 
-    def export_csv(self):
-        logs = self.list_logs(limit=10000)
+    def export_csv(self, filters=None):
+        logs = self.list_logs(limit=10000, filters=filters)
         out = BASE_DIR / 'outputs' / 'activity_logs.csv'
         out.parent.mkdir(exist_ok=True)
         if not logs:

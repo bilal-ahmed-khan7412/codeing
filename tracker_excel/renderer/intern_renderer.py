@@ -5,8 +5,14 @@ from .styles import STYLES, apply_cell, apply_range, GREEN_FILL, GREEN_TEXT, RED
 from .utils import default_visible_page, style_row, write_row, set_widths, is_date, max_numeric_week, set_dynamic_row_height
 
 
+def _safe_sheet_name(name):
+    bad = '[]:*?/\\'
+    sheet = ''.join('_' if ch in bad else ch for ch in (name or ''))[:31]
+    return sheet or 'Intern'
+
+
 def render_intern(wb, intern):
-    ws = wb.create_sheet(intern.name[:31])
+    ws = wb.create_sheet(_safe_sheet_name(intern.name))
     default_visible_page(ws)
     set_widths(ws, {'A':34,'B':48,'C':38,'D':82,'E':27,'F':76,'G':16,'H':22})
     width_map = {1:34,2:48,3:38,4:82,5:27,6:76,7:16,8:22}

@@ -88,7 +88,7 @@ _ENUM_FIELDS = {'status'}
 # didn't catch it, just wrongly assigned). Dropped unconditionally
 # before the LLM's args are even considered, so current_workbook/
 # generated-output defaults are the only source for these fields.
-_PATH_FIELDS = {'source', 'workbook', 'output'}
+_PATH_FIELDS = {'source', 'workbook', 'output', 'spec'}
 
 # Commands whose task_ref should be corrected toward an actual date/task
 # number found in the message when one exists, rather than trusting
@@ -427,12 +427,7 @@ class ChatService:
         if missing:
             return {'ok': False, 'error': f'Missing fields: {", ".join(missing)}'}
         result = self.executor.execute({'command': draft.command, 'args': draft.args})
-        return {
-            'ok': result.ok,
-            'message': result.message,
-            'output_path': result.output_path,
-            'data': result.data,
-        }
+        return result.public_dict()
 
     def cancel(self, draft_id: str) -> dict:
         self.drafts.pop(draft_id, None)
@@ -498,18 +493,19 @@ class ChatService:
         """Summary requests are read-only: execute immediately, no approval step."""
         result = self.executor.execute({'command': draft.command, 'args': draft.args})
         self.drafts.pop(draft.draft_id, None)
+        pub = result.public_dict()
         return {
             'ok': result.ok,
             'type': 'result',
             'draft_id': draft.draft_id,
-            'message': result.message,
+            'message': pub['message'],
             'command': draft.command,
             'readonly': True,
             'requires_approval': False,
             'needs_approval': False,
             'proposal': None,
             'draft': None,
-            'output_path': result.output_path,
+            'output_path': pub['output_path'],
             'data': result.data,
         }
 

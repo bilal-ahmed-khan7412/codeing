@@ -22,7 +22,7 @@
       </div>
       <button onclick="loadLogs()">Apply</button>
       <button onclick="clearFilters()">Clear</button>
-      <a href="/api/logs/export"><button>Export CSV</button></a>
+      <button onclick="exportCsv()">Export CSV</button>
       <span id="logStatus" class="muted"></span>
     </div>
     <div class="card blueprint elev-sm" style="padding:20px;overflow-x:auto">
@@ -69,6 +69,10 @@ async function loadLogs(){
   }
 }
 function clearFilters(){['filter_q','filter_email','filter_action','filter_status'].forEach(id=>document.getElementById(id).value='');loadLogs();}
+function exportCsv(){
+  const params = new URLSearchParams({q: val('filter_q'), email: val('filter_email'), action: val('filter_action'), status: val('filter_status')});
+  window.location.href = '/api/logs/export?' + params.toString();
+}
 loadLogs();
 renderNav();
 </script>

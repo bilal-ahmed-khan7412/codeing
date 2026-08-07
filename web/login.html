@@ -18,9 +18,11 @@
         <div style="font-family:var(--font-heading);font-weight:600;font-size:24px">Intern Tracker</div>
         <div class="text-muted" style="font-size:13px;margin-top:4px">Sign in to continue</div>
       </div>
-      <div class="field"><label>Email</label><input id="email" autocomplete="username" placeholder="Enter your email"></div>
-      <div class="field"><label>Password</label><input id="password" type="password" autocomplete="current-password" placeholder="Enter your password"></div>
-      <button class="btn btn-primary btn-block" onclick="login()">Login</button>
+      <form id="loginForm" onsubmit="event.preventDefault(); login();">
+        <div class="field"><label>Email</label><input id="email" autocomplete="username" placeholder="Enter your email"></div>
+        <div class="field"><label>Password</label><input id="password" type="password" autocomplete="current-password" placeholder="Enter your password"></div>
+        <button id="loginBtn" type="submit" class="btn btn-primary btn-block">Login</button>
+      </form>
       <p class="text-muted" style="font-size:12px;margin:10px 0 2px"><a href="/forgot-password">Forgot password?</a></p>
       <p class="text-muted" style="font-size:12px;margin:0 0 10px"><a href="/signup">Request access</a></p>
       <p id="msg" class="text-muted" style="font-size:13px"></p>
@@ -28,6 +30,19 @@
   </div>
 </div>
 <script>
-async function login(){const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:password.value})});const d=await r.json();if(d.ok) location.href='/'; else msg.textContent=d.error||'Login failed';}
+async function login(){
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true;
+  msg.textContent = '';
+  try{
+    const r = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email.value,password:password.value})});
+    const d = await r.json();
+    if(d.ok){ location.href='/'; return; }
+    msg.textContent = d.error || 'Login failed';
+  }catch(e){
+    msg.textContent = 'Login failed: ' + e.message;
+  }
+  btn.disabled = false;
+}
 </script>
 </body></html>

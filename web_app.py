@@ -112,12 +112,17 @@ def output_path(name: str | None, prefix: str, user: dict) -> str:
     return str(folder / f"{prefix}_{stamp}.xlsx")
 
 
+def _within(path: Path, base: Path) -> bool:
+    try:
+        path.resolve().relative_to(base.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def resolve_workbook(value: str, user: dict) -> str:
     if not value:
         raise HTTPException(status_code=400, detail="Workbook/source path is required")
-    p = Path(value)
-    if p.exists():
-        return str(p)
     name = safe_name(value)
     candidates = [user_upload_dir(user) / name, user_output_dir(user) / name]
     if v65_is_admin_or_super(user):
@@ -125,7 +130,22 @@ def resolve_workbook(value: str, user: dict) -> str:
     for c in candidates:
         if Path(c).exists():
             return str(c)
-    return value
+    # A literal path is only trusted if it already resolves inside a
+    # directory this user is allowed to read (their own upload/output dirs,
+    # or any user's for Admin/Super Admin) - never a bare "does this path
+    # exist anywhere on disk" check, which let any authenticated user read
+    # any other user's files by guessing outputs/<user_id>/<filename>.xlsx.
+    p = Path(value)
+    allowed_bases = [user_upload_dir(user), user_output_dir(user)]
+    if v65_is_admin_or_super(user):
+        allowed_bases += [UPLOAD_DIR, OUTPUT_DIR]
+    if p.exists() and any(_within(p, base) for base in allowed_bases):
+        return str(p)
+    # Fail closed: do not hand back an unvalidated path. A caller like
+    # parse_workbook() would happily open it directly (relative to this
+    # process's CWD), which is exactly how the old "return value" fallback
+    # re-leaked cross-user files even after the checks above rejected them.
+    raise HTTPException(status_code=404, detail="Workbook not found")
 
 
 def _owned_files(folder: Path):
@@ -325,16 +345,15 @@ def api_logs(request: Request, q: str = '', email: str = '', action: str = '', s
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Not allowed'})
     filters = {'q': q, 'email': email, 'action': action, 'status': status, 'interface': interface}
     logs = audit_service.list_logs(filters=filters)
-    if user.get('role') != 'Admin':
-        logs = [x for x in logs if x.get('email') == user.get('email')]
     return {'ok': True, 'logs': logs}
 
 @app.get('/api/logs/export')
-def api_logs_export(request: Request):
+def api_logs_export(request: Request, q: str = '', email: str = '', action: str = '', status: str = '', interface: str = ''):
     user = require_login(request)
     if not can_view_logs(user):
         return JSONResponse(status_code=403, content={'ok': False, 'error': 'Not allowed'})
-    path = audit_service.export_csv()
+    filters = {'q': q, 'email': email, 'action': action, 'status': status, 'interface': interface}
+    path = audit_service.export_csv(filters=filters)
     audit_service.log(user, interface='Logs', action='Export Logs', status='Success', output_workbook=Path(path).name)
     return FileResponse(path, filename=Path(path).name)
 
@@ -581,10 +600,10 @@ def execute_command(request: Request, payload: dict):
         elif cmd not in {"summary"}:
             args["output"] = output_path(None, cmd or "tracker", user)
         result = executor.execute({"command": cmd, "args": args})
-        response = {"ok": result.ok, "message": result.message, "output_path": result.output_path, "data": result.data}
+        response = result.public_dict()
         if result.output_path:
             response["download"] = f"/download/{Path(result.output_path).name}"
-        audit_service.log(user, interface='Forms', action=cmd, target_name=args.get('intern') or args.get('name') or args.get('plan_name') or '', input_workbook=args.get('source') or args.get('workbook') or '', output_workbook=Path(result.output_path).name if result.output_path else '', status='Success' if result.ok else 'Failed', summary=result.message)
+        audit_service.log(user, interface='Forms', action=cmd, target_name=args.get('intern') or args.get('name') or args.get('plan_name') or '', input_workbook=args.get('source') or args.get('workbook') or '', output_workbook=Path(result.output_path).name if result.output_path else '', status='Success' if result.ok else 'Failed', summary=response['message'])
         return response
     except CommandValidationError as e:
         audit_service.log(user, interface='Forms', action=payload.get('command',''), status='Failed', error_message=str(e))
@@ -631,12 +650,22 @@ def chat_approve(request: Request, payload: dict):
     draft = getattr(chat_service, 'drafts', {}).get(draft_id)
     if not draft:
         return JSONResponse(status_code=404, content={'ok': False, 'error': 'Draft not found'})
+    if not can_execute(user, draft.command):
+        audit_service.log(user, interface='Chat', action=getattr(draft, 'command', 'chat_approve'), status='Blocked', summary='Permission denied')
+        return JSONResponse(status_code=403, content={'ok': False, 'error': 'Permission denied'})
     try:
         args = draft.args
         if 'source' in args:
             args['source'] = resolve_workbook(args['source'], user)
         if 'workbook' in args:
             args['workbook'] = resolve_workbook(args['workbook'], user)
+        if 'spec' in args:
+            # add_intern's JSON spec file is looked up the same sandboxed
+            # way as a workbook (own upload/output dir, or any user's for
+            # Admin/Super Admin) - never a raw filesystem path, which would
+            # let chat text or a direct /api/chat/update call point this at
+            # any file the server process can read.
+            args['spec'] = resolve_workbook(args['spec'], user)
         if 'output' in args:
             args['output'] = output_path(args.get('output'), draft.command or 'chat', user)
         elif draft.command not in {'summary'}:
@@ -654,7 +683,9 @@ def chat_approve(request: Request, payload: dict):
         if result.get('ok') and user.get('auto_cleanup_versions'):
             try:
                 old_source = Path(args.get('source') or '')
-                new_output = Path(result.get('output_path') or '')
+                # Use the already-computed full path, not result['output_path']
+                # (now just a filename - see CommandResult.public_dict()).
+                new_output = Path(args.get('output') or '')
                 own_dirs = {user_upload_dir(user).resolve(), user_output_dir(user).resolve()}
                 if old_source.exists() and old_source.resolve().parent in own_dirs and old_source.resolve() != new_output.resolve():
                     old_source.unlink()
@@ -1120,8 +1151,8 @@ def api_evaluation_finalize(request: Request, payload: dict):
         return JSONResponse(status_code=404, content={'ok': False, 'error': 'Evaluation session not found'})
     try:
         out = finalize_evaluation(sess['evaluation'], payload.get('eval_sheet'), payload.get('metrics') or {}, payload.get('scores') or {}, {}, payload.get('strengths',''), payload.get('development',''), payload.get('remark',''))
-        audit_service.log(user, interface='Evaluation', action='Finalize Evaluation', target_type='Intern', target_name=payload.get('intern_name',''), output_workbook=str(out), status='Success')
-        return {'ok': True, 'output_path': str(out), 'download': '/evaluation/download?file=' + Path(out).name}
+        audit_service.log(user, interface='Evaluation', action='Finalize Evaluation', target_type='Intern', target_name=payload.get('intern_name',''), output_workbook=Path(out).name, status='Success')
+        return {'ok': True, 'output_path': Path(out).name, 'download': '/evaluation/download?file=' + Path(out).name}
     except Exception as e:
         return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
 
@@ -1183,11 +1214,21 @@ def api_v92_readonly_intern_summary(request: Request, payload: dict):
             candidates = []
             if raw:
                 cleaned = raw.replace('outputs /', 'outputs/').replace('uploads /', 'uploads/')
-                candidates.append(Path(cleaned))
-                candidates.append(own_output / Path(cleaned).name)
-                candidates.append(own_upload / Path(cleaned).name)
+                literal = Path(cleaned)
+                # Same rule as the module-level resolve_workbook(): only
+                # trust the literal path if it's already inside a
+                # directory this user may read - otherwise any
+                # authenticated user could pass outputs/<other id>/<file>
+                # and read another user's workbook straight through.
+                allowed_bases = [own_upload, own_output]
                 if v65_is_admin_or_super(user):
-                    candidates += sorted(OUTPUT_DIR.glob(f"*/{Path(cleaned).name}")) + sorted(UPLOAD_DIR.glob(f"*/{Path(cleaned).name}"))
+                    allowed_bases += [UPLOAD_DIR, OUTPUT_DIR]
+                if any(_within(literal, base) for base in allowed_bases):
+                    candidates.append(literal)
+                candidates.append(own_output / literal.name)
+                candidates.append(own_upload / literal.name)
+                if v65_is_admin_or_super(user):
+                    candidates += sorted(OUTPUT_DIR.glob(f"*/{literal.name}")) + sorted(UPLOAD_DIR.glob(f"*/{literal.name}"))
             for c in candidates:
                 if Path(c).exists() and Path(c).is_file():
                     return Path(c)

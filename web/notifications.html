@@ -9,13 +9,14 @@
     <div class="card blueprint elev-sm" style="padding:20px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <h3 style="margin:0">Ticket Updates</h3>
-        <button class="btn btn-secondary" onclick="markAllRead()">Mark all read</button>
+        <button class="btn btn-secondary" onclick="markAllRead(this)">Mark all read</button>
       </div>
       <div id="notifList">Loading...</div>
     </div>
   </main>
 </div>
 <script src="/static/js/nav.js"></script>
+<script src="/static/js/ui.js"></script>
 <script>
 function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 async function load(){
@@ -31,15 +32,15 @@ async function load(){
         ${i.description ? `<div style="margin-top:6px;font-size:13px">You reported: ${escapeHtml(i.description)}</div>` : ''}
         ${i.resolution_note ? `<div style="margin-top:6px;font-size:13px"><b>Response:</b> ${escapeHtml(i.resolution_note)}</div>` : ''}
       </div>
-      <button class="btn btn-secondary" onclick="dismiss(${i.id})" style="flex:none">Dismiss</button>
+      <button class="btn btn-secondary" onclick="dismiss(this,${i.id})" style="flex:none">Dismiss</button>
     </div>`).join('');
 }
-async function dismiss(id){
-  await fetch(`/api/notifications/${id}/dismiss`, {method:'POST'});
+async function dismiss(btn,id){
+  await withLoading(btn, () => fetch(`/api/notifications/${id}/dismiss`, {method:'POST'}));
   load();
 }
-async function markAllRead(){
-  await fetch('/api/notifications/mark-read', {method:'POST'});
+async function markAllRead(btn){
+  await withLoading(btn, () => fetch('/api/notifications/mark-read', {method:'POST'}));
   load();
 }
 load();
