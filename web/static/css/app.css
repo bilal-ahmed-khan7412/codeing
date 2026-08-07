@@ -117,7 +117,8 @@ tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparen
 /* — app shell (sidebar layout) — */
 .appshell { display: flex; min-height: 100vh; }
 .sidebar { width: 232px; flex: none; background: var(--color-accent-900); padding: 28px 20px; display: flex; flex-direction: column; gap: 28px; }
-.sidebar .brand { font-family: var(--font-heading); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; color: var(--color-bg); }
+.sidebar .brand { font-family: var(--font-heading); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; color: var(--color-bg); display: flex; align-items: center; gap: 10px; }
+.sidebar .brand img { width: 22px; height: 22px; flex: none; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 14px; font-weight: 600; text-decoration: none;
   color: color-mix(in srgb, var(--color-bg) 65%, transparent); background: transparent; }
@@ -142,7 +143,8 @@ tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparen
    (.authside-spacer) so the same proportional spacing holds without
    showing any text. */
 .authside { background: var(--color-accent-900); color: var(--color-bg); padding: 56px 48px; display: flex; flex-direction: column; justify-content: space-between; }
-.authside-brand { font-family: var(--font-heading); font-weight: 700; font-size: 30px; letter-spacing: -0.02em; }
+.authside-brand { font-family: var(--font-heading); font-weight: 700; font-size: 30px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px; }
+.authside-brand img { width: 30px; height: 30px; flex: none; }
 .authside h1 { color: var(--color-bg); font-size: 36px; line-height: 1.08; margin: 0 0 14px; }
 .authmain { display: flex; align-items: center; justify-content: center; background: var(--color-bg); padding: 24px; }
 .authcard { width: min(440px, 100%); padding: 34px 28px; }

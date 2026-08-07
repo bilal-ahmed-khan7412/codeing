@@ -95,7 +95,7 @@ async function renderNav(navElementId) {
           </a>
         </div>`;
       el.innerHTML = `
-        <div class="brand">Intern Tracker</div>
+        <div class="brand"><img src="/static/img/logo-mark-dark.svg" alt=""> Intern Tracker</div>
         ${bellHtml}
         <nav>${links.map(([href, label]) => {
           const active = href !== "/logout" && href === path;

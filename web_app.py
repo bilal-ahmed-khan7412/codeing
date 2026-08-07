@@ -184,6 +184,22 @@ def resolve_workbook(value: str, user: dict) -> str:
     raise HTTPException(status_code=404, detail="Workbook not found")
 
 
+def resolve_current_workbook_or_none(value: str | None, user: dict) -> str | None:
+    """Best-effort resolve of the browser's "current workbook" convenience
+    default. Unlike resolve_workbook(), never raises - this value is just a
+    pre-fill hint (e.g. for chat/manual draft creation), not a requirement,
+    and a stale/invalid value left over in localStorage (from another
+    session, a deleted file, etc.) shouldn't block actions - like Create
+    Fresh Workbook - that don't even need a source in the first place.
+    """
+    if not value:
+        return None
+    try:
+        return resolve_workbook(value, user)
+    except HTTPException:
+        return None
+
+
 def _owned_files(folder: Path):
     return [{"name": p.name} for p in sorted(folder.glob("*.xlsx"))]
 
@@ -661,8 +677,7 @@ def chat_message(request: Request, payload: dict):
     current_workbook = payload.get('current_workbook')
     if not text:
         return JSONResponse(status_code=400, content={'ok': False, 'error': 'message is required'})
-    if current_workbook:
-        current_workbook = resolve_workbook(current_workbook, user)
+    current_workbook = resolve_current_workbook_or_none(current_workbook, user)
     return chat_service.message(text, current_workbook, user_service.get_user_llm_credentials(user['id']))
 
 @app.post("/api/chat/update")
@@ -751,9 +766,7 @@ def chat_manual(request: Request, payload: dict):
     user = require_login(request)
     command = payload.get('command', '')
     args = payload.get('args') or {}
-    current_workbook = payload.get('current_workbook')
-    if current_workbook:
-        current_workbook = resolve_workbook(current_workbook, user)
+    current_workbook = resolve_current_workbook_or_none(payload.get('current_workbook'), user)
     return chat_service.create_manual_draft(command, args, current_workbook, user_service.get_user_llm_credentials(user['id']))
 
 
