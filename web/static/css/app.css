@@ -144,7 +144,14 @@ tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparen
    showing any text. */
 .authside { background: var(--color-accent-900); color: var(--color-bg); padding: 56px 48px; display: flex; flex-direction: column; justify-content: space-between; }
 .authside-brand { font-family: var(--font-heading); font-weight: 700; font-size: 30px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 12px; }
-.authside-brand img { width: 30px; height: 30px; flex: none; }
+.authside-brand img { width: 46px; height: 46px; flex: none; }
+
+/* — two-tile logo stamp (company + product), auth pages only — */
+.logo-stamp { display: flex; align-items: stretch; width: fit-content; }
+.logo-stamp .tile-company { background: var(--color-text); padding: 0 16px; display: flex; align-items: center; font-family: ui-monospace, "Courier New", monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.34em; text-transform: uppercase; color: var(--color-bg); }
+.logo-stamp .tile-product { background: var(--color-accent); padding: 12px 18px; display: flex; align-items: center; gap: 13px; }
+.logo-stamp .tile-product img { width: 30px; height: 30px; flex: none; }
+.logo-stamp .tile-product span { font-family: var(--font-heading); font-size: 22px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--color-bg); line-height: 1; }
 .authside h1 { color: var(--color-bg); font-size: 36px; line-height: 1.08; margin: 0 0 14px; }
 .authmain { display: flex; align-items: center; justify-content: center; background: var(--color-bg); padding: 24px; }
 .authcard { width: min(440px, 100%); padding: 34px 28px; }
