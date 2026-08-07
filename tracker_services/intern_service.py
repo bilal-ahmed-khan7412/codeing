@@ -169,15 +169,16 @@ class InternService:
             return CommandResult(False, 'No interns matched the holiday scope')
         for intern in affected:
             self._apply_holiday_to_intern(intern, name, holiday_date)
+            data.holidays.append([name, holiday_date, scope, intern.name, True])
         out = output_path or VersionService.next_version_path(source_path)
-        RenderService.render_data(data, out)
-        return CommandResult(True, f"Added holiday {name} on {date} for {len(affected)} intern(s)", out)
+        note = f"Added holiday {name} on {date} for {len(affected)} intern(s)"
+        RenderService.render_data(data, out, version_action='add_holiday', version_note=note)
+        return CommandResult(True, note, out)
 
     def _apply_holiday_to_intern(self, intern, holiday_name: str, holiday_date: datetime):
         # Convert existing date row if present.
         for task in intern.tasks:
             if task and isinstance(task[0], datetime) and task[0].date() == holiday_date.date():
-                task[1] = task[1] if len(task) > 1 else '-'
                 task[2] = f'HOLIDAY — {holiday_name}'
                 task[3] = holiday_name
                 task[4] = ''

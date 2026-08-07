@@ -1,27 +1,20 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 
-from tracker_config.settings import load_dotenv
+from tracker_config.settings import ensure_env_secret
 
 _ENV_PATH = Path(".env")
 
 
 def _ensure_secret() -> str:
-    load_dotenv(_ENV_PATH)
-    secret = os.getenv("API_KEY_ENCRYPTION_SECRET")
-    if secret:
-        return secret
-    # No secret configured yet: generate one and persist it to .env so
-    # stored API keys stay decryptable across server restarts.
-    secret = Fernet.generate_key().decode()
-    os.environ["API_KEY_ENCRYPTION_SECRET"] = secret
-    with _ENV_PATH.open("a", encoding="utf-8") as f:
-        f.write(f"\nAPI_KEY_ENCRYPTION_SECRET={secret}\n")
-    return secret
+    # Persisted to .env so stored API keys stay decryptable across server
+    # restarts - bootstrapped atomically so multiple worker processes
+    # starting at once don't each generate a different key (see
+    # ensure_env_secret's docstring).
+    return ensure_env_secret(_ENV_PATH, "API_KEY_ENCRYPTION_SECRET", lambda: Fernet.generate_key().decode())
 
 
 _FERNET = Fernet(_ensure_secret().encode())

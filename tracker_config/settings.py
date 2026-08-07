@@ -2,7 +2,9 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 import os
+import time
 
 @dataclass
 class Settings:
@@ -38,6 +40,57 @@ def load_dotenv(path: str | Path = ".env") -> dict:
         os.environ.setdefault(key, value)
         loaded[key] = value
     return loaded
+
+
+def ensure_env_secret(env_path: str | Path, var_name: str, generate: Callable[[], str]) -> str:
+    """Atomically bootstrap a persisted secret into .env - safe against
+    multiple processes starting at once (e.g. uvicorn --workers N). Without
+    this, each process independently generates and appends its own value
+    when one is missing, so different workers end up signing/decrypting
+    with different keys - sessions or encrypted API keys created by one
+    worker silently fail to validate/decrypt on another.
+
+    Uses O_CREAT|O_EXCL as a cross-platform atomic "claim" - only the
+    process that successfully creates the lock file generates the secret;
+    everyone else waits briefly and reads back what the winner wrote.
+    """
+    env_path = Path(env_path)
+    load_dotenv(env_path)
+    value = os.getenv(var_name)
+    if value:
+        return value
+
+    lock_path = Path(str(env_path) + f".{var_name}.lock")
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        for _ in range(50):
+            time.sleep(0.1)
+            load_dotenv(env_path)
+            value = os.getenv(var_name)
+            if value:
+                return value
+        # Lock holder never finished (crashed mid-write?) - fall through
+        # and generate independently rather than hang forever.
+    else:
+        try:
+            value = generate()
+            os.environ[var_name] = value
+            with env_path.open("a", encoding="utf-8") as f:
+                f.write(f"\n{var_name}={value}\n")
+            return value
+        finally:
+            try:
+                lock_path.unlink()
+            except OSError:
+                pass
+
+    value = generate()
+    os.environ[var_name] = value
+    with env_path.open("a", encoding="utf-8") as f:
+        f.write(f"\n{var_name}={value}\n")
+    return value
 
 
 def load_settings(env_path: str | Path = ".env") -> Settings:

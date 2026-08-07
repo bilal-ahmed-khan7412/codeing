@@ -7,6 +7,14 @@ from .styles import STYLES, apply_cell, GREEN_FILL, GREEN_TEXT, RED_FILL, RED_TE
 from .utils import default_visible_page, write_row, style_row, set_widths, excel_date_formula
 
 
+def _quote_sheet(name):
+    """Escape a sheet name for embedding in an Excel formula reference like
+    'Name'!A1 - Excel requires a literal ' inside a quoted sheet name to be
+    doubled, otherwise the formula is malformed for any intern whose name
+    (and therefore sheet name) contains an apostrophe, e.g. O'Brien."""
+    return str(name or '').replace("'", "''")
+
+
 def _render_empty_dashboard_shell(ws):
     """Render a safe dashboard shell when there are no interns yet."""
     from .utils import write_row, style_row, set_widths
@@ -64,7 +72,7 @@ def render_dashboard(wb, intern_meta):
     write_row(ws,5,headers,'table_header')
     start = 6
     for idx,m in enumerate(intern_meta, start=start):
-        sh = m['sheet']
+        sh = _quote_sheet(m['sheet'])
         ts,te = m['task_start'],m['task_end']
         ps,pe = m['project_start'],m['project_end']
         target_formula = excel_date_formula(m.get('target_end'))
@@ -94,7 +102,7 @@ def render_dashboard(wb, intern_meta):
     m_header = manager_section + 1
     write_row(ws,m_header,['Intern','Weeks in Plan','Weekly Emails Sent','LM Acknowledged','Reporting %','Learning Health','Attention Needed?'],'table_header')
     for n,m in enumerate(intern_meta, start=m_header+1):
-        sh=m['sheet']; wsrow = n; kpi_row = start + (n - (m_header+1))
+        sh=_quote_sheet(m['sheet']); wsrow = n; kpi_row = start + (n - (m_header+1))
         vals=[m['name'], m['week_count'], f'=COUNTIF(\'{sh}\'!G{m["weekly_start"]}:G{m["weekly_end"]},"Yes")', f'=COUNTIF(\'{sh}\'!H{m["weekly_start"]}:H{m["weekly_end"]},"Yes")', f'=IFERROR(C{wsrow}/B{wsrow},0)', f'=IF(F{kpi_row}>=0.8,"Strong",IF(F{kpi_row}>=0.5,"Developing","Needs Support"))', f'=IF(OR(F{kpi_row}<0.5,E{wsrow}<0.5),"Yes — check in","No")']
         write_row(ws,n,vals,'body_center')
         apply_cell(ws.cell(n,1), STYLES['row_label'])
@@ -127,7 +135,8 @@ def render_dashboard(wb, intern_meta):
         row = weekly + 1 + w
         vals=[f'W{w}']
         for m in intern_meta:
-            vals.append(f'=COUNTIFS(\'{m["sheet"]}\'!B{m["task_start"]}:B{m["task_end"]},{w},\'{m["sheet"]}\'!E{m["task_start"]}:E{m["task_end"]},"Completed")')
+            msh = _quote_sheet(m["sheet"])
+            vals.append(f'=COUNTIFS(\'{msh}\'!B{m["task_start"]}:B{m["task_end"]},{w},\'{msh}\'!E{m["task_start"]}:E{m["task_end"]},"Completed")')
         write_row(ws,row,vals,'body_center')
         apply_cell(ws.cell(row,1), STYLES['row_label'])
 

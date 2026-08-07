@@ -39,6 +39,16 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), na
 # would silently stop the browser from ever sending the session cookie back.
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").strip().lower() == "true"
 
+
+def _issue_csrf_cookie(res):
+    # Double-submit CSRF cookie: deliberately NOT HttpOnly, since same-origin
+    # JS (nav.js) needs to read it and echo it back as a header on every
+    # mutating request - see the csrf_protection middleware below for the
+    # actual check and why this is safe despite being JS-readable.
+    token = secrets.token_hex(16)
+    res.set_cookie('csrf_token', token, httponly=False, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
+    return res
+
 # All pages here are server-rendered HTML with inline <script> blocks (no
 # build step / bundler), so script-src and style-src need 'unsafe-inline'.
 # Nothing in this app loads from a third-party origin, so default-src
@@ -69,6 +79,30 @@ async def security_headers(request: Request, call_next):
         # actually asks, rather than assuming.
         response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+_CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    # Double-submit cookie check for state-changing API requests. A
+    # cross-site page can't read this origin's cookies (same-origin policy)
+    # and can't attach a custom header via a plain HTML form submission, so
+    # it can't forge a request carrying a matching X-CSRF-Token even though
+    # the browser still attaches the session cookie automatically.
+    # SameSite=Lax already blocks most of this; this covers the residual
+    # gap (top-level GET-navigation CSRF, browsers with imperfect SameSite
+    # support). Scoped to requests that already carry a session - an
+    # anonymous request like POST /api/login has no pre-existing session
+    # for a forged request to ride on in the first place.
+    if request.method not in _CSRF_SAFE_METHODS and request.url.path.startswith("/api/"):
+        if request.cookies.get("session_token"):
+            csrf_cookie = request.cookies.get("csrf_token") or ""
+            csrf_header = request.headers.get("x-csrf-token") or ""
+            if not csrf_cookie or not secrets.compare_digest(csrf_cookie, csrf_header):
+                return JSONResponse(status_code=403, content={"ok": False, "error": "Missing or invalid CSRF token"})
+    return await call_next(request)
 
 
 executor = CommandExecutor()
@@ -250,6 +284,7 @@ def api_login(payload: dict):
     public_user['is_maintainer'] = is_maintainer(user)
     res = JSONResponse({'ok': True, 'user': public_user})
     res.set_cookie('session_token', token, httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
+    _issue_csrf_cookie(res)
     return res
 
 @app.get('/logout')
@@ -260,6 +295,7 @@ def logout(request: Request):
         audit_service.log(user, interface='Auth', action='Logout', status='Success', summary='User logged out')
     res = RedirectResponse('/login')
     res.delete_cookie('session_token')
+    res.delete_cookie('csrf_token')
     return res
 
 @app.get('/api/me')
@@ -895,6 +931,7 @@ def api_update_profile(request: Request, payload: dict):
     res = JSONResponse({'ok': True})
     if updated:
         res.set_cookie('session_token', create_session_token(updated), httponly=True, samesite='lax', secure=COOKIE_SECURE, max_age=SESSION_TTL_SECONDS)
+        _issue_csrf_cookie(res)
     return res
 
 
@@ -1150,9 +1187,10 @@ def api_evaluation_finalize(request: Request, payload: dict):
     if not sess:
         return JSONResponse(status_code=404, content={'ok': False, 'error': 'Evaluation session not found'})
     try:
-        out = finalize_evaluation(sess['evaluation'], payload.get('eval_sheet'), payload.get('metrics') or {}, payload.get('scores') or {}, {}, payload.get('strengths',''), payload.get('development',''), payload.get('remark',''))
-        audit_service.log(user, interface='Evaluation', action='Finalize Evaluation', target_type='Intern', target_name=payload.get('intern_name',''), output_workbook=Path(out).name, status='Success')
-        return {'ok': True, 'output_path': Path(out).name, 'download': '/evaluation/download?file=' + Path(out).name}
+        out, missing = finalize_evaluation(sess['evaluation'], payload.get('eval_sheet'), payload.get('metrics') or {}, payload.get('scores') or {}, {}, payload.get('strengths',''), payload.get('development',''), payload.get('remark',''))
+        summary = 'Some fields could not be written - labels not found: ' + ', '.join(missing) if missing else ''
+        audit_service.log(user, interface='Evaluation', action='Finalize Evaluation', target_type='Intern', target_name=payload.get('intern_name',''), output_workbook=Path(out).name, status='Success', summary=summary)
+        return {'ok': True, 'output_path': Path(out).name, 'download': '/evaluation/download?file=' + Path(out).name, 'warnings': missing}
     except Exception as e:
         return JSONResponse(status_code=400, content={'ok': False, 'error': str(e)})
 

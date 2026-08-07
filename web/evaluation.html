@@ -203,6 +203,9 @@ async function finalizeEval(btn){
   if(!d.ok){toast(d.error,'error');return;}
   hasUnsavedProgress=false;
   show('download');step(5);doneMsg.textContent='Evaluation workbook generated.';downloadLink.href=d.download;
+  if(d.warnings && d.warnings.length){
+    toast(`Some fields could not be saved (label not found in template): ${d.warnings.join(', ')}`,'error');
+  }
 }
 
 renderNav().then(user=>{

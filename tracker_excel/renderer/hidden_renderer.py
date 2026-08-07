@@ -1,10 +1,11 @@
+from datetime import datetime
 from .utils import write_row
 from .styles import STYLES, apply_cell
 
 HIDDEN_SHEETS = ['_Config','_Interns','_Plans','_PlanItems','_Tasks','_Projects','_WeeklyReports','_Holidays','_Versions']
 
 
-def render_hidden_sheets(wb, data, intern_meta):
+def render_hidden_sheets(wb, data, intern_meta, version_action='render', version_note=''):
     for name in HIDDEN_SHEETS:
         if name in wb.sheetnames:
             ws = wb[name]
@@ -63,6 +64,15 @@ def render_hidden_sheets(wb, data, intern_meta):
             write_row(ws,r,[intern.name,i]+w,'body_left')
             r += 1
 
-    wb['_Holidays'].append(['HolidayName','Date','Scope','Intern','RenderedAsScheduleRow'])
-    wb['_Versions'].append(['Version','Action','Notes'])
-    wb['_Versions'].append(['v1','render','Generated from renderer v1'])
+    ws = wb['_Holidays']
+    write_row(ws,1,['HolidayName','Date','Scope','Intern','RenderedAsScheduleRow'],'table_header')
+    for r, h in enumerate(data.holidays, 2):
+        write_row(ws, r, h, 'body_left')
+
+    ws = wb['_Versions']
+    write_row(ws,1,['Version','Action','Notes'],'table_header')
+    for r, v in enumerate(data.versions, 2):
+        write_row(ws, r, v, 'body_left')
+    new_version = f'v{len(data.versions) + 1}'
+    note = version_note or f'Rendered {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+    write_row(ws, len(data.versions) + 2, [new_version, version_action, note], 'body_left')

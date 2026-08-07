@@ -32,6 +32,8 @@ class InternSheetData:
 class WorkbookData:
     plans: list = field(default_factory=list)
     interns: list = field(default_factory=list)
+    holidays: list = field(default_factory=list)
+    versions: list = field(default_factory=list)
 
 
 def row_values(ws, row, max_col):
@@ -100,6 +102,16 @@ def parse_workbook(path):
     wb = load_workbook(path, data_only=False)
     data = WorkbookData()
     for ws in wb.worksheets:
+        # Hidden history sheets round-trip by title, not by A1 content -
+        # read back whatever was written on the previous render so holiday/
+        # version history accumulates across renders instead of being lost
+        # and re-faked from scratch each time.
+        if ws.title == '_Holidays':
+            data.holidays = non_empty_rows(ws, 2, ws.max_row, 5)
+            continue
+        if ws.title == '_Versions':
+            data.versions = non_empty_rows(ws, 2, ws.max_row, 3)
+            continue
         a1 = ws['A1'].value
         if ws.title == 'Dashboard' or a1 is None:
             continue

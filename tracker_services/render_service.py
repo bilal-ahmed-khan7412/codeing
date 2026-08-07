@@ -8,7 +8,7 @@ from tracker_excel.renderer.hidden_renderer import render_hidden_sheets
 
 class RenderService:
     @staticmethod
-    def render_data(data: WorkbookData, output_path: str) -> str:
+    def render_data(data: WorkbookData, output_path: str, version_action: str = 'render', version_note: str = '') -> str:
         wb = Workbook()
         wb.remove(wb.active)
         for plan in data.plans:
@@ -17,7 +17,7 @@ class RenderService:
         for intern in data.interns:
             intern_meta.append(render_intern(wb, intern))
         render_dashboard(wb, intern_meta)
-        render_hidden_sheets(wb, data, intern_meta)
+        render_hidden_sheets(wb, data, intern_meta, version_action=version_action, version_note=version_note)
         wb.calculation.fullCalcOnLoad = True
         wb.calculation.forceFullCalc = True
         wb.save(output_path)

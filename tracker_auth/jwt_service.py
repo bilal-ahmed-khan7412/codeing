@@ -7,7 +7,7 @@ from pathlib import Path
 
 import jwt
 
-from tracker_config.settings import load_dotenv
+from tracker_config.settings import ensure_env_secret
 
 _ENV_PATH = Path(".env")
 _ALGORITHM = "HS256"
@@ -15,17 +15,11 @@ DEFAULT_SESSION_TTL_SECONDS = 8 * 60 * 60
 
 
 def _ensure_secret() -> str:
-    load_dotenv(_ENV_PATH)
-    secret = os.getenv("JWT_SECRET")
-    if secret:
-        return secret
-    # No secret configured yet: generate one and persist it to .env so
-    # sessions survive a server restart instead of invalidating on every reload.
-    secret = secrets.token_hex(32)
-    os.environ["JWT_SECRET"] = secret
-    with _ENV_PATH.open("a", encoding="utf-8") as f:
-        f.write(f"\nJWT_SECRET={secret}\n")
-    return secret
+    # Persisted to .env so sessions survive a server restart instead of
+    # invalidating on every reload - bootstrapped atomically so multiple
+    # worker processes starting at once don't each generate a different
+    # secret (see ensure_env_secret's docstring).
+    return ensure_env_secret(_ENV_PATH, "JWT_SECRET", lambda: secrets.token_hex(32))
 
 
 _SECRET = _ensure_secret()

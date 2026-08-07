@@ -52,7 +52,7 @@ class PlanService:
             main_headers=['Project Title','Objective','Tech Stack','Start','Target End','Status'],
             main_row=[main_title, objective, tech_stack, start, end, 'Pending'],
             scenario_headers=['Scenario','Skills Applied','Deliverable','Assigned Week','Due Date','Status'],
-            scenario_row=[scenario, skills, deliverable, max(1, min(6, len(weekly_reports) or 1)), end, 'Pending'],
+            scenario_row=[scenario, skills, deliverable, max(1, len(weekly_reports) or 1), end, 'Pending'],
             task_headers=['Date','Week','Theme','Task Description','Status (Pending/In Progress/Completed)','Remarks'],
             tasks=tasks,
             weekly_headers=['Week #','Theme','Highlights','Blockers','Tasks Completed','Manager Comments','Email Sent','Line Manager Acknowledged'],
@@ -85,7 +85,7 @@ class PlanService:
                 item.get('theme', ''),
                 item.get('task', ''),
                 item.get('weekly_project', ''),
-                self._clean_visible_text(self._clean_visible_text(item.get('notes', ''), ''), ''),
+                self._clean_visible_text(item.get('notes', ''), ''),
             ])
         if not rows:
             rows = [[i, '', '', '', ''] for i in range(1, 9)]
@@ -227,7 +227,7 @@ class PlanService:
         if current_deliverable in generic_scenario_values:
             intern.scenario_row[2] = defaults['deliverable']
         if not intern.scenario_row[3]:
-            intern.scenario_row[3] = max(1, min(6, len(intern.weekly_reports) or 1))
+            intern.scenario_row[3] = max(1, len(intern.weekly_reports) or 1)
         if not intern.scenario_row[4]:
             intern.scenario_row[4] = end
         if not intern.scenario_row[5]:

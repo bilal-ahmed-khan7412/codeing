@@ -117,6 +117,14 @@ class UserService:
         conn.close()
 
     def update_user(self, user_id: int, data: dict):
+        # Currently unused by any route, but kept safe rather than trusting
+        # a caller's raw dict - same allowlist update_role() already uses
+        # for role, plus one for status, so a future caller can't slip in
+        # e.g. role="Super Admin" with no validation at all.
+        if 'role' in data and data['role'] not in {'Admin', 'User'}:
+            raise ValueError('role must be Admin or User')
+        if 'status' in data and data['status'] not in {'Pending', 'Active', 'Inactive', 'Rejected'}:
+            raise ValueError('invalid status')
         fields = ['name','email','department','role','status']
         values = [data.get(k,'') for k in fields]
         conn = get_conn()

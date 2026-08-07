@@ -205,21 +205,27 @@ def _find_cell(ws, text: str):
     return None
 
 
-def _write_below_label(ws, label: str, value: Any):
+def _write_below_label(ws, label: str, value: Any, missing: list[str] | None = None):
     cell = _find_cell(ws, label)
     if cell:
         ws.cell(row=cell.row + 1, column=cell.column).value = value
+    elif missing is not None:
+        missing.append(label)
 
 
-def _write_after_label(ws, label: str, value: Any, offset: int = 1):
+def _write_after_label(ws, label: str, value: Any, offset: int = 1, missing: list[str] | None = None):
     cell = _find_cell(ws, label)
     if cell:
         ws.cell(row=cell.row, column=cell.column + offset).value = value
+    elif missing is not None:
+        missing.append(label)
 
 
-def _write_criterion(ws, criterion: str, score: Any, comment: str = ''):
+def _write_criterion(ws, criterion: str, score: Any, comment: str = '', missing: list[str] | None = None):
     cell = _find_cell(ws, criterion)
     if not cell:
+        if missing is not None:
+            missing.append(criterion)
         return
     # Expected layout: Criterion in column B, Score in D, Evidence/comments in G.
     ws.cell(row=cell.row, column=cell.column + 2).value = int(score)
@@ -227,35 +233,41 @@ def _write_criterion(ws, criterion: str, score: Any, comment: str = ''):
         ws.cell(row=cell.row, column=cell.column + 5).value = comment
 
 
-def finalize_evaluation(eval_path: str, eval_sheet: str, tracker_metrics: dict[str, Any], scores: dict[str, Any], comments: dict[str, str], strengths: str, development: str, remark: str) -> Path:
+def finalize_evaluation(eval_path: str, eval_sheet: str, tracker_metrics: dict[str, Any], scores: dict[str, Any], comments: dict[str, str], strengths: str, development: str, remark: str) -> tuple[Path, list[str]]:
+    """Returns (output_path, missing_labels) - missing_labels lists any field
+    that couldn't be written because its label wasn't found in the template
+    (e.g. edited/renamed), so a caller can warn the admin instead of the
+    write silently dropping that content with no indication anything went
+    wrong."""
     wb = load_workbook(eval_path)
     if eval_sheet not in wb.sheetnames:
         raise ValueError(f'Evaluation sheet not found: {eval_sheet}')
     ws = wb[eval_sheet]
+    missing: list[str] = []
 
     # Delivery snapshot fields already exist in workbook. Do not add fields.
-    _write_below_label(ws, 'Daily tasks completed', tracker_metrics.get('daily_done', 0))
-    _write_below_label(ws, 'Daily tasks planned', tracker_metrics.get('daily_planned', 0))
-    _write_below_label(ws, 'Daily completion %', tracker_metrics.get('daily_pct', 0))
-    _write_below_label(ws, 'Weekly projects done', tracker_metrics.get('weekly_done', 0))
-    _write_below_label(ws, 'Weekly projects planned', tracker_metrics.get('weekly_planned', 0))
+    _write_below_label(ws, 'Daily tasks completed', tracker_metrics.get('daily_done', 0), missing)
+    _write_below_label(ws, 'Daily tasks planned', tracker_metrics.get('daily_planned', 0), missing)
+    _write_below_label(ws, 'Daily completion %', tracker_metrics.get('daily_pct', 0), missing)
+    _write_below_label(ws, 'Weekly projects done', tracker_metrics.get('weekly_done', 0), missing)
+    _write_below_label(ws, 'Weekly projects planned', tracker_metrics.get('weekly_planned', 0), missing)
 
     # Auto scores for delivery completion criteria.
-    _write_criterion(ws, 'Daily Tasks Completion', tracker_metrics.get('daily_score', 0), 'Auto-filled from tracker daily task completion.')
-    _write_criterion(ws, 'Weekly Tasks / Projects', tracker_metrics.get('weekly_score', 0), 'Auto-filled from tracker weekly project completion.')
+    _write_criterion(ws, 'Daily Tasks Completion', tracker_metrics.get('daily_score', 0), 'Auto-filled from tracker daily task completion.', missing)
+    _write_criterion(ws, 'Weekly Tasks / Projects', tracker_metrics.get('weekly_score', 0), 'Auto-filled from tracker weekly project completion.', missing)
 
     # Admin-approved scores from interview questions.
     for c, score in scores.items():
-        _write_criterion(ws, c, score, comments.get(c, ''))
+        _write_criterion(ws, c, score, comments.get(c, ''), missing)
 
     # Existing text areas.
-    _write_below_label(ws, 'Key strengths', strengths)
-    _write_below_label(ws, 'Development areas', development)
-    _write_below_label(ws, 'Final manager remark', remark)
+    _write_below_label(ws, 'Key strengths', strengths, missing)
+    _write_below_label(ws, 'Development areas', development, missing)
+    _write_below_label(ws, 'Final manager remark', remark, missing)
 
     out = OUTPUT_DIR / f"Evaluated_{Path(eval_path).stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     wb.save(out)
-    return out
+    return out, missing
 
 
 # v0.72 evaluation rationale override
@@ -372,11 +384,15 @@ def get_tracker_metrics(tracker_path: str, intern_name: str, evaluation_date: st
             intern = item
             break
     if not intern:
+        # A low-similarity "best available" match is worse than no match at
+        # all - it silently scores the evaluator against the wrong intern's
+        # tracker data instead of surfacing a clear not-found error.
+        MIN_MATCH_SCORE = 0.6
         best = None
-        best_score = 0
+        best_score = MIN_MATCH_SCORE
         for item in getattr(data, 'interns', []) or []:
             sc = similarity(item.name, intern_name)
-            if sc > best_score:
+            if sc >= best_score:
                 best = item
                 best_score = sc
         intern = best

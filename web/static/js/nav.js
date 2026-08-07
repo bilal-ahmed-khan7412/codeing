@@ -1,3 +1,29 @@
+// CSRF protection: attach the double-submit csrf_token cookie as a header
+// on every mutating same-origin fetch, so individual page scripts don't
+// each need to remember to do it - see the csrf_protection middleware in
+// web_app.py for the server-side check this pairs with. Installed first,
+// before any page script runs its own fetch() calls.
+(function () {
+  const originalFetch = window.fetch;
+  function readCsrfCookie() {
+    const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  window.fetch = function (input, init) {
+    init = init || {};
+    const method = (init.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+      const token = readCsrfCookie();
+      if (token) {
+        const headers = new Headers(init.headers || {});
+        headers.set('X-CSRF-Token', token);
+        init = Object.assign({}, init, { headers });
+      }
+    }
+    return originalFetch(input, init);
+  };
+})();
+
 // Shared sidebar nav. Renders into an initially-empty <aside id="sidebar">
 // only once /api/me resolves, so a role's links are never shown then
 // stripped - nothing appears until the real role is known.
